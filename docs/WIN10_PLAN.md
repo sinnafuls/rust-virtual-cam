@@ -185,7 +185,7 @@ plumbing in `obsproject/libdshowcapture/source/output-filter.{hpp,cpp}`.
 
 | Our plan | OBS |
 |---|---|
-| DirectShow filter under `CLSID_VideoInputDeviceCategory` | Same. OBS uses DirectShow on **every** Windows version, including 11 (it never calls `MFCreateVirtualCamera`), and it works in Discord, Chrome, Zoom and Teams. |
+| DirectShow filter under `CLSID_VideoInputDeviceCategory` | Same. OBS uses DirectShow on **every** Windows version, including 11 (its `win-dshow` virtual camera has no `MFCreateVirtualCamera` path), and it works in Discord, Chrome, Zoom and Teams. |
 | Writer app creates the section in the user session; filter opens it | Same. `video_queue_create` makes `OBSVirtualCamVideo` with no prefix, which is session-local, the equivalent of `Local\`. |
 | Resolution known before the app starts, from `stream.bin` | Same idea. The filter constructor reads `%APPDATA%\obs-virtualcam.txt` (`"WxHxinterval"`), which OBS writes when the camera starts. |
 | Object set: filter + one output pin + 2 enumerators + class factory | Same: `IBaseFilter`, `IPin`, `IAMStreamConfig`, `IKsPropertySet` (only `AMPROPERTY_PIN_CATEGORY` → `PIN_CATEGORY_CAPTURE`), and `IAMFilterMiscFlags` → `AM_FILTER_MISC_FLAGS_IS_SOURCE`. No `IAMPushSource`, `IQualityControl` or property pages, **so they are dropped from the MVP.** |
