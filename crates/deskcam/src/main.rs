@@ -12,7 +12,7 @@ mod vcam;
 mod worker;
 
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, LPARAM, WPARAM};
-use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, CreateMutexW, GetCurrentProcess, SetPriorityClass};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_CLOSE};
 use windows_core::{PCWSTR, w};
@@ -35,6 +35,8 @@ fn main() {
 
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        // Background app: games, Discord and the desktop always get the CPU first.
+        let _ = SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
     }
     // Held for the process lifetime; a second instance exits quietly.
     let _instance = unsafe { CreateMutexW(None, true, w!("Local\\DeskCam.Instance")) };

@@ -60,7 +60,7 @@ name = DeskCam      ; camera name shown in apps
 ```
 
 Tips:
-- Discord's camera feed normally runs at 30 fps or less, so `fps = 30` is a good default.
+- Keep `fps = 30` for Discord. Discord sends the camera at 30 fps or less anyway, but it still processes every frame it receives: at `fps = 144` it can use many CPU cores and make your whole PC stutter.
 - To find the display number, choose **Open log** in the tray menu. The top of the log lists every display with its number, resolution and refresh rate.
 
 ## Tray menu

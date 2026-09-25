@@ -140,21 +140,28 @@ fn run(cfg: &Config, stop: &AtomicBool, report: &dyn Fn(Status)) {
 
         match (&mut capture, &section) {
             (Some(c), Some(s)) => {
+                // Sleep until Windows has a new desktop frame; a static screen costs nothing. The
+                // timeout keeps the heartbeat and viewer check running.
+                if !c.wait_frame(IDLE_SLEEP.as_millis() as u32) {
+                    continue;
+                }
+                // Never exceed the configured rate, even where MinUpdateInterval is unsupported.
+                let now = Instant::now();
+                if now < next_frame {
+                    std::thread::sleep(next_frame - now);
+                }
+                let tick_start = Instant::now();
                 if let Err(e) = c.tick(&s.ring) {
                     log!("capture error: {e}");
                     capture = None;
                     s.ring.invalidate();
-                    retry_at = now + 1000;
+                    retry_at = now_ms() + 1000;
                     report(Status::Error(format!("capture error: {e}")));
                     std::thread::sleep(IDLE_SLEEP);
                     continue;
                 }
-                next_frame += interval;
-                let now = Instant::now();
-                if next_frame < now {
-                    next_frame = now + interval;
-                }
-                std::thread::sleep(next_frame - now);
+                // Stay on the frame grid; after a stall resume at once without replaying a backlog.
+                next_frame = (next_frame + interval).max(tick_start);
             }
             _ => std::thread::sleep(IDLE_SLEEP),
         }

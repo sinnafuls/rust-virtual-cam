@@ -131,16 +131,11 @@ pub(crate) fn new(info: StreamInfo, id: u32) -> windows_core::Result<windows_cor
         }),
         cv: Condvar::new(),
     });
-    let thread_shared = shared.clone();
-    let thread = std::thread::Builder::new()
-        .name("deskcam-delivery".into())
-        .spawn(move || delivery_loop(thread_shared))
-        .map_err(|_| windows_core::Error::from(E_FAIL))?;
     Ok(windows_core::ComObject::new(MediaStream {
         attrs,
         descriptor,
         shared,
-        thread: Mutex::new(Some(thread)),
+        thread: Mutex::new(None),
         _guard: ObjGuard::new(),
     }))
 }
@@ -210,6 +205,19 @@ impl MediaStream {
         unsafe { queue.QueueEventParamVar(MEStreamStarted.0 as u32, &GUID::zeroed(), S_OK, std::ptr::null())? };
         st.state = MF_STREAM_STATE_RUNNING;
         trace(&format!("stream started {:?} {}x{} interval {:?}", st.format, st.info.width, st.info.height, st.interval));
+        drop(st);
+        // The delivery thread exists only once an app actually streams; sources the Frame
+        // Server creates just to inspect descriptors never get one.
+        let mut thread = lock(&self.thread);
+        if thread.is_none() {
+            let shared = self.shared.clone();
+            *thread = Some(
+                std::thread::Builder::new()
+                    .name("deskcam-delivery".into())
+                    .spawn(move || delivery_loop(shared))
+                    .map_err(|_| windows_core::Error::from(E_FAIL))?,
+            );
+        }
         self.shared.cv.notify_all();
         Ok(())
     }
@@ -396,6 +404,10 @@ fn write_frame(st: &StreamState, dst: *mut u8, pitch: isize) {
     let row = |r: usize, len: usize| unsafe { std::slice::from_raw_parts_mut(dst.offset(r as isize * pitch), len) };
     let outcome = match &st.section {
         Some(section) => section.ring.read_latest(now_ms(), |slot| match format {
+            Format::Nv12 if pitch == w as isize => {
+                // Tightly packed destination: one copy for both planes.
+                unsafe { std::slice::from_raw_parts_mut(dst, slot.len()) }.copy_from_slice(slot);
+            }
             Format::Nv12 => {
                 for r in 0..h * 3 / 2 {
                     row(r, w).copy_from_slice(&slot[r * w..][..w]);

@@ -90,3 +90,63 @@ fn started_stream_delivers_paced_black_nv12_without_writer() {
 
     unsafe { source.Shutdown().unwrap() };
 }
+
+fn process_thread_count() -> usize {
+    use windows::Win32::System::Diagnostics::ToolHelp::*;
+    let pid = std::process::id();
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0).unwrap();
+        let mut entry = THREADENTRY32 { dwSize: size_of::<THREADENTRY32>() as u32, ..Default::default() };
+        let mut count = 0;
+        let mut ok = Thread32First(snap, &mut entry).is_ok();
+        while ok {
+            if entry.th32OwnerProcessID == pid {
+                count += 1;
+            }
+            ok = Thread32Next(snap, &mut entry).is_ok();
+        }
+        let _ = windows::Win32::Foundation::CloseHandle(snap);
+        count
+    }
+}
+
+/// The Frame Server and its monitor create activators they never activate (enumeration,
+/// attribute queries). Releasing them, or shutting them down after activation, must not leave
+/// delivery threads behind in those long-lived service processes.
+#[test]
+fn released_activators_leave_no_threads() {
+    unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL).unwrap() };
+    let info = StreamInfo { width: 320, height: 180, fps: 30 };
+    // Warm up MF's own worker threads before taking the baseline.
+    drop(deskcam_source::activator::create(info).unwrap());
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let before = process_thread_count();
+    for _ in 0..8 {
+        drop(deskcam_source::activator::create(info).unwrap());
+    }
+    for _ in 0..8 {
+        let act = deskcam_source::activator::create(info).unwrap();
+        let _source: IMFMediaSource = unsafe { act.ActivateObject().unwrap() };
+        unsafe { act.ShutdownObject().unwrap() };
+    }
+    for _ in 0..8 {
+        let act = deskcam_source::activator::create(info).unwrap();
+        let source: IMFMediaSource = unsafe { act.ActivateObject().unwrap() };
+        drop(source);
+        drop(act);
+    }
+    for _ in 0..4 {
+        use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
+        let act = deskcam_source::activator::create(info).unwrap();
+        let source: IMFMediaSource = unsafe { act.ActivateObject().unwrap() };
+        let pd = unsafe { source.CreatePresentationDescriptor().unwrap() };
+        unsafe {
+            pd.SelectStream(0).unwrap();
+            source.Start(&pd, &windows_core::GUID::zeroed(), &PROPVARIANT::default()).unwrap();
+            act.ShutdownObject().unwrap();
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let after = process_thread_count();
+    assert!(after <= before + 1, "threads grew from {before} to {after}");
+}
