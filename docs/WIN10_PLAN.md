@@ -1,6 +1,65 @@
 # Windows 10 support plan
 
-Status: **proposal**. Nothing in this document is implemented yet.
+Status: **implemented, not yet tested on Windows 10 hardware.** Phases 0–3 are written; everything
+type-checks for x64 and x86, and a Windows CI workflow runs the tests and registers the filter. The
+design sections below were written first; see *Implementation status* for how the code turned out.
+
+## Implementation status
+
+| Phase | Status | Where |
+|---|---|---|
+| 0. `deskcam.exe` starts on Win10 | Done | `deskcam/src/vcam.rs` (runtime `MFCreateVirtualCamera`), `deskcam-proto/src/os.rs` (`RtlGetVersion`), `deskcam/src/capture.rs` (cursor/borderless non-fatal), `worker.rs` (build ≥ 18362 check) |
+| 1. Backend abstraction | Done | `deskcam/src/backend.rs`, `config.rs` (`backend = auto \| mf \| dshow`), `deskcam-proto/src/section.rs` (`create_local` / `open_local`) |
+| 2a. `deskcam-dshow` filter (NV12) | Done | `crates/deskcam-dshow`: `filter.rs`, `pin.rs`, `enums.rs`, `stream.rs`, `format.rs`, `lib.rs` (DLL exports, registration) |
+| 2b. I420 / YUY2, x86 build, resize handling, flush on Stop | Done | `deskcam-proto/src/convert.rs` (+ unit tests), `stream.rs` (`FrameSource` reopens on size change and scales) |
+| 3. Installer / uninstaller | Done | `scripts/install.ps1` (`-Backend auto\|mf\|dshow`, x64 + x86 registration), `scripts/uninstall.ps1` |
+| 4. Tests / CI | Partly | `deskcam-dshow/tests/filter.rs` (pin/caps + a running graph into the Null Renderer), `.github/workflows/ci.yml`. **Still to do:** `probe --dshow`, and the manual app matrix on a Win10 VM |
+| 5. Docs | Done | README support table, install steps and troubleshooting |
+| 6. Desktop Duplication capture (no yellow border) | Not started | Optional |
+
+### How it works now
+
+```
+deskcam.exe ── backend = auto ──► Windows 11: MFCreateVirtualCamera (unchanged path)
+     │                           Windows 10: create Local\DeskCam-v1-WxH, keep it open
+     │
+     └── worker (unchanged): writes frames into the FrameRing while any reader heartbeat is fresh
+
+App process (Discord, Chrome, OBS, ...)                 install.ps1 registered, once:
+  enumerates CLSID_VideoInputDeviceCategory ─────────►  "DeskCam" → {566D2A35-...} → deskcam_dshow.dll
+  CoCreateInstance → Filter (IBaseFilter)                (x64 in Program Files\DeskCam, x86 in \x86)
+    └─ OutputPin (IPin, IAMStreamConfig, IKsPropertySet = PIN_CATEGORY_CAPTURE)
+         Connect → downstream allocator (or CLSID_MemoryAllocator), 3+ buffers
+         Pause/Run → delivery thread, one sample per 1/fps:
+           read stream.bin → open Local\ section → touch_reader → read_latest
+           → NV12 copy / I420 / YUY2 (nearest-neighbour scale if the app's size changed) → Receive
+         Stop → Decommit, BeginFlush, join thread, EndFlush
+```
+
+### Where the code differs from the design below
+
+- **No app manifest.** `RtlGetVersion` reports the real build without one, so Phase 0.5 was dropped.
+- **Section security.** The `Local\` section keeps the same DACL as the global one plus a
+  **low integrity label** (`S:(ML;;NW;;;LW)`), so low-integrity consumer processes can still write the
+  reader heartbeat. Without the heartbeat, capture never starts.
+- **Camera name on Win10** is passed at registration: `regsvr32 /n /i:"Name" deskcam_dshow.dll` calls
+  `DllInstall`, and `install.ps1` reads `name` from `config.ini`. Plain `regsvr32` registers as
+  "DeskCam". The app logs a note if the registered name differs from `config.ini`.
+- **Frame rate:** a consumer may pick any rate from 1 to 240 via `IAMStreamConfig::SetFormat`, and the
+  filter paces delivery to it. The size must be the one advertised.
+- **Paused state:** like OBS, the filter delivers samples in Paused too (without timestamps) so renderers
+  can cue. After `Run`, samples carry stream time (`clock − tStart`).
+- **`GetSyncSource` with no clock** returns `VFW_E_NO_CLOCK`, because the `windows` crate trait cannot
+  return S_OK with NULL.
+- **Locked DLLs on reinstall:** apps keep the filter loaded, so `install.ps1` renames an in-use DLL and
+  copies the new one next to it. The leftover is deleted on a later install.
+
+### Next steps
+
+1. Run CI on the branch and fix anything Windows-specific that `cargo check` could not catch.
+2. Test on a Windows 10 22H2 VM using the manual matrix in Phase 4.
+3. `probe --dshow`: enumerate the device like an app does and save a snapshot.
+4. Optional: a placeholder image while `deskcam.exe` isn't running, and Desktop Duplication capture.
 
 ## 1. The problem
 
@@ -19,7 +78,7 @@ On Windows 10, three parts of that chain are missing or behave differently:
 | Piece | Windows 11 | Windows 10 |
 |---|---|---|
 | `MFCreateVirtualCamera` (mfsensorgroup.dll) | Available since build 22000 | **Missing.** There is no supported way to add a software camera to the Frame Server. |
-| Linking | Import resolves | `windows-rs` 0.62 links through `raw-dylib`, which makes a **load-time** import. Because of that, `deskcam.exe` most likely **fails to start** on Win10 ("entry point not found"), even before any code runs. Confirm on a Win10 VM. |
+| Linking | Import resolves | `windows-rs` 0.62 links through `raw-dylib`, which makes a **load-time** import (confirmed in `windows-link`'s `link!` macro). Because of that, `deskcam.exe` **fails to start** on Win10 ("entry point not found") before any code runs. Fixed in Phase 0, and CI checks the import table. |
 | `GraphicsCaptureAccess` / `SetIsBorderRequired` | Available | Missing. This is already non-fatal (it's only logged), so Win10 shows the yellow capture border. |
 | `SetIsCursorCaptureEnabled` | Available | Needs Win10 2004 (19041) or later. It is currently called with `?`, so on older builds a failure here is fatal. |
 | `IGraphicsCaptureItemInterop::CreateForMonitor` | Available | Needs Win10 1903 (18362) or later. |

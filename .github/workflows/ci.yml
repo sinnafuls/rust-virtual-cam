@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust targets
+        run: rustup target add i686-pc-windows-msvc
+
+      - name: Build (x64, all crates)
+        run: cargo build --release --workspace --locked
+
+      - name: Build 32-bit DirectShow filter
+        run: cargo build --release --target i686-pc-windows-msvc -p deskcam-dshow --locked
+
+      - name: Check DLL exports
+        shell: pwsh
+        run: |
+          $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          foreach ($dll in 'target\release\deskcam_dshow.dll', 'target\i686-pc-windows-msvc\release\deskcam_dshow.dll') {
+            $exports = & $dumpbin /exports $dll | Out-String
+            foreach ($name in 'DllGetClassObject', 'DllCanUnloadNow', 'DllRegisterServer', 'DllUnregisterServer', 'DllInstall') {
+              if ($exports -notmatch "\s$name(\s|$)") { throw "$dll does not export $name undecorated" }
+            }
+          }
+          # deskcam.exe must not import Windows 11-only functions, or it cannot start on Windows 10.
+          $imports = & $dumpbin /imports target\release\deskcam.exe | Out-String
+          if ($imports -match 'MFCreateVirtualCamera') { throw 'deskcam.exe imports MFCreateVirtualCamera' }
+
+      - name: Test
+        # deskcam-source needs the Frame Server and Media Foundation, which Server runners lack.
+        run: cargo test --release --locked -p deskcam-proto -p deskcam -p deskcam-dshow
+
+      - name: Test 32-bit DirectShow filter
+        run: cargo test --release --locked --target i686-pc-windows-msvc -p deskcam-dshow
+
+      - name: Register the DirectShow filter and find it as a camera
+        shell: pwsh
+        run: |
+          $dll = (Resolve-Path target\release\deskcam_dshow.dll).Path
+          $p = Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList '/s', '/n', '/i:"DeskCam CI"', "`"$dll`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "regsvr32 failed: $($p.ExitCode)" }
+          $key = 'Registry::HKEY_CLASSES_ROOT\CLSID\{860BB310-5D01-11D0-BD3B-00A0C911CE86}\Instance\{566D2A35-2FF9-4009-9C41-04054E6A4BD3}'
+          $name = (Get-ItemProperty $key).FriendlyName
+          if ($name -ne 'DeskCam CI') { throw "unexpected FriendlyName '$name'" }
+          $p = Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList '/u', '/s', "`"$dll`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "regsvr32 /u failed: $($p.ExitCode)" }
+          if (Test-Path $key) { throw 'device entry left behind after unregister' }

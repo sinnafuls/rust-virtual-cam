@@ -1,19 +1,24 @@
 # DeskCam
 
-Share your desktop as a **webcam** on Windows 11. DeskCam adds a camera named
-**"DeskCam (Windows Virtual Camera)"** that streams one of your monitors, so you can pick it in
-Discord, OBS, AMD Privacy View, browsers, or any other app that uses a camera.
+Share your desktop as a **webcam** on Windows 11 and Windows 10. DeskCam adds a camera named
+**"DeskCam"** that streams one of your monitors, so you can pick it in Discord, OBS, AMD Privacy
+View, browsers, or any other app that uses a camera.
 
 - Written in Rust, with no dependencies beyond the Windows APIs.
 - Runs in the background with a tray icon.
 - Uses almost no CPU while no app is using the camera; it only captures while something is watching.
 - Configured with a small `config.ini` file.
 
-> Windows 11 only. The virtual camera API it uses (`MFCreateVirtualCamera`) does not exist on Windows 10.
+| | How the camera is added | Which apps see it |
+|---|---|---|
+| **Windows 11** | Windows' virtual camera API (`MFCreateVirtualCamera`); shows as "DeskCam (Windows Virtual Camera)" | All camera apps |
+| **Windows 10** (1903 or newer, 64-bit) | A DirectShow capture filter (the same method OBS Virtual Camera uses) | Discord, OBS, Chrome, Edge, Firefox, Zoom, Teams and other DirectShow apps. **Not** the built-in Windows Camera app or other Media Foundation-only apps |
+
+> **Windows 10 support is new and not yet tested on real hardware.** See [docs/WIN10_PLAN.md](docs/WIN10_PLAN.md).
 
 ## Requirements
 
-- Windows 11
+- Windows 11, or 64-bit Windows 10 version 1903 or newer
 - [Rust](https://rustup.rs/), stable, with the default `x86_64-pc-windows-msvc` toolchain
 - [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the
   **"Desktop development with C++"** workload (for the MSVC linker and Windows SDK)
@@ -28,6 +33,13 @@ Discord, OBS, AMD Privacy View, browsers, or any other app that uses a camera.
    cargo build --release
    ```
 
+   **Windows 10 only:** also build the 32-bit camera filter, so 32-bit apps can see the camera too:
+
+   ```powershell
+   rustup target add i686-pc-windows-msvc
+   cargo build --release --target i686-pc-windows-msvc -p deskcam-dshow
+   ```
+
 2. Open **PowerShell as Administrator** in the same folder and run the installer:
 
    ```powershell
@@ -36,12 +48,12 @@ Discord, OBS, AMD Privacy View, browsers, or any other app that uses a camera.
 
    The installer does the following:
    - copies the program to `C:\Program Files\DeskCam`;
-   - registers the camera with Windows (this step needs administrator rights);
+   - registers the camera with Windows (this step needs administrator rights). On Windows 10 it registers the DirectShow filter, 64-bit and 32-bit;
    - creates the settings folder `C:\ProgramData\DeskCam`;
    - makes DeskCam start automatically when you log in;
    - starts DeskCam right away. The tray icon may be hidden behind the `^` arrow on the taskbar.
 
-3. Open Discord (or OBS, your browser, and so on) and select **DeskCam (Windows Virtual Camera)** as your camera:
+3. Open Discord (or OBS, your browser, and so on) and select **DeskCam (Windows Virtual Camera)** (Windows 11) or **DeskCam** (Windows 10) as your camera. On Windows 10, restart any app that was already open:
    - **Discord:** Settings → Voice & Video → Camera
    - **OBS:** Sources → + → Video Capture Device → DeskCam
 
@@ -56,12 +68,14 @@ fps = 30            ; 1-240, or "monitor" to match the display's refresh rate
 width = 1920        ; output size; the desktop is scaled to fit (black bars if needed)
 height = 1080       ; even numbers, 320x180 up to 3840x2160
 cursor = true       ; show the mouse cursor
-name = DeskCam      ; camera name shown in apps
+name = DeskCam      ; camera name shown in apps (Windows 10: run install.ps1 again after changing it)
+backend = auto      ; auto, mf (Windows 11 virtual camera) or dshow (DirectShow filter)
 ```
 
 Tips:
 - Discord's camera feed normally runs at 30 fps or less, so `fps = 30` is a good default.
 - To find the display number, choose **Open log** in the tray menu. The top of the log lists every display with its number, resolution and refresh rate.
+- `backend = auto` picks the right method for your Windows version. To try the Windows 10 method on Windows 11, set `backend = dshow` and run `install.ps1 -Backend dshow`.
 
 ## Tray menu
 
@@ -97,27 +111,34 @@ This removes the program, the camera registration and the autostart entry. Your 
   - Open the log from the tray menu. It should say `capture started` while an app is using the camera.
   - If you just changed settings, use **Restart** from the tray menu.
 - **"Access denied" error.** Always install with `scripts\install.ps1`. Don't register the DLL from the `target` folder: Windows' camera service can't read files inside your user folder.
-- **Check that frames are flowing.** Run `cargo run --release --example probe`. It opens the camera like an app would and prints the resolution, measured fps and brightness, and saves a snapshot to `probe.bmp`.
+- **Check that frames are flowing.** Run `cargo run --release --example probe`. It opens the camera like an app would and prints the resolution, measured fps and brightness, and saves a snapshot to `probe.bmp`. (Windows 11 only for now.)
+- **Windows 10: the camera doesn't show up in an app.** Restart the app after installing. The built-in Windows Camera app can't see DeskCam on Windows 10. For a 32-bit app, make sure you built and installed the 32-bit filter (see Install).
+- **Windows 10: a yellow border appears around the screen while streaming.** Windows 10 always shows it during screen capture and it can't be turned off. It is drawn on your screen, not in the video.
+- **Windows 10: install.ps1 says files are in use.** An app that used the camera still has the filter loaded. The installer works around this, but close those apps before uninstalling.
 
 ## How it works
 
-DeskCam has two parts:
+DeskCam has two parts: the app, and a DLL that apps talk to as if it were a camera.
 
 - **`deskcam.exe`** runs in your session.
-  - It registers the virtual camera with `MFCreateVirtualCamera`.
   - When an app starts using the camera, it captures the monitor with Windows.Graphics.Capture, then scales it and converts it to NV12 on the GPU.
   - It writes each frame into shared memory.
-- **`deskcam_source.dll`** is a Media Foundation media source.
-  - It is loaded by the Windows Camera Frame Server.
-  - It reads the newest frame from shared memory and delivers it to apps at the configured frame rate.
+- **Windows 11:** `deskcam.exe` registers the camera with `MFCreateVirtualCamera`. **`deskcam_source.dll`**, a Media Foundation media source, is loaded by the Windows Camera Frame Server. It reads the newest frame from shared memory and delivers it to apps.
+- **Windows 10:** `install.ps1` registers **`deskcam_dshow.dll`**, a DirectShow capture filter, as a video device. Each app that opens the camera loads it into its own process. It reads the newest frame from the shared memory `deskcam.exe` created and delivers it as NV12, I420 or YUY2.
+
+Either way, the app only captures the screen while some app is reading frames.
 
 ```
 crates/
   deskcam/          tray app: config, screen capture, GPU conversion
-  deskcam-source/   media source DLL loaded by Windows' camera service
-  deskcam-proto/    shared-memory layout used by both
+  deskcam-source/   Windows 11: media source DLL loaded by Windows' camera service
+  deskcam-dshow/    Windows 10: DirectShow capture filter DLL loaded by camera apps
+  deskcam-proto/    shared-memory layout, format conversion and helpers used by all three
 scripts/            install.ps1 / uninstall.ps1
+docs/               WIN10_PLAN.md: design of the Windows 10 support
 ```
 
 Credits: the media source design follows [smourier/VCamSample](https://github.com/smourier/VCamSample)
-and [bj-rn/VL.Video.VirtualCamera](https://github.com/bj-rn/VL.Video.VirtualCamera).
+and [bj-rn/VL.Video.VirtualCamera](https://github.com/bj-rn/VL.Video.VirtualCamera). The Windows 10
+filter was written from the DirectShow documentation, using OBS Studio's virtual camera as a
+behavioral reference (no OBS code is included).
