@@ -1,7 +1,9 @@
 //! Layout of the shared frame section and its lock-free seqlock ring.
 //!
-//! The section is created by the media source inside the Frame Server (session 0, where
-//! creating `Global\` objects needs no privilege) and opened by the app for writing.
+//! On Windows 11 the section is created by the media source inside the Frame Server (session 0,
+//! where creating `Global\` objects needs no privilege) and opened by the app for writing. On
+//! Windows 10 the app creates a `Local\` section itself and the DirectShow filter, loaded inside
+//! each consumer process of the same session, opens it.
 //! Every header field may be written by any Authenticated User, so readers bound-check
 //! everything and never trust sizes from the header.
 
@@ -26,8 +28,21 @@ const OFF_WRITER_HB: usize = 32;
 const OFF_READER_HB: usize = 40;
 const OFF_SEQ: usize = 64;
 
-pub fn section_name(width: u32, height: u32) -> String {
-    format!("Global\\DeskCam-v1-{width}x{height}")
+/// Kernel object namespace of the frame section.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Namespace {
+    /// Windows 11: created by the media source inside the Frame Server (session 0).
+    Global,
+    /// Windows 10: created by the app in the user's session, where DirectShow consumers run.
+    Local,
+}
+
+pub fn section_name(ns: Namespace, width: u32, height: u32) -> String {
+    let prefix = match ns {
+        Namespace::Global => "Global",
+        Namespace::Local => "Local",
+    };
+    format!("{prefix}\\DeskCam-v1-{width}x{height}")
 }
 
 /// NV12 frame size in bytes.

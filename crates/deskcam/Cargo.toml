@@ -1,6 +1,6 @@
 [package]
 name = "deskcam"
-description = "Streams a monitor as a Windows 11 virtual camera"
+description = "Streams a monitor as a virtual camera on Windows 10 and 11"
 edition.workspace = true
 version.workspace = true
 license.workspace = true

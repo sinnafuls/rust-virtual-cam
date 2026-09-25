@@ -1,8 +1,10 @@
 #![windows_subsystem = "windows"]
-//! DeskCam: streams a monitor as a Windows 11 virtual camera from a tray-icon background app.
+//! DeskCam: streams a monitor as a webcam from a tray-icon background app. Windows 11 uses the
+//! Media Foundation virtual camera; Windows 10 uses a DirectShow capture filter (see `backend`).
 //!
 //! `deskcam.exe` runs the app; `deskcam.exe stop` asks a running instance to exit.
 
+mod backend;
 mod capture;
 mod config;
 mod log;

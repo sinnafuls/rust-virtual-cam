@@ -15,8 +15,11 @@ width = 1920
 height = 1080
 ; Draw the mouse cursor
 cursor = true
-; Camera name shown in apps (Windows appends "Windows Virtual Camera")
+; Camera name shown in apps (Windows 11 appends "Windows Virtual Camera";
+; on Windows 10 re-run install.ps1 after changing it)
 name = DeskCam
+; How the camera is exposed: auto (Windows 11: mf, Windows 10: dshow), mf, or dshow
+backend = auto
 "#;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -31,6 +34,14 @@ pub enum FpsSel {
     Monitor,
 }
 
+/// Camera backend; see `backend.rs`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BackendSel {
+    Auto,
+    MediaFoundation,
+    DirectShow,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Config {
     pub monitor: MonitorSel,
@@ -39,6 +50,7 @@ pub struct Config {
     pub height: u32,
     pub cursor: bool,
     pub name: String,
+    pub backend: BackendSel,
 }
 
 impl Default for Config {
@@ -50,6 +62,7 @@ impl Default for Config {
             height: 1080,
             cursor: true,
             name: "DeskCam".into(),
+            backend: BackendSel::Auto,
         }
     }
 }
@@ -121,6 +134,14 @@ pub fn parse(text: &str) -> Result<Config, String> {
                 }
                 cfg.name = value.to_owned();
             }
+            "backend" => {
+                cfg.backend = match value.to_ascii_lowercase().as_str() {
+                    "auto" => BackendSel::Auto,
+                    "mf" | "mediafoundation" => BackendSel::MediaFoundation,
+                    "dshow" | "directshow" => BackendSel::DirectShow,
+                    _ => return Err(format!("config.ini line {n}: backend must be auto, mf or dshow, got '{value}'")),
+                }
+            }
             _ => return Err(format!("config.ini line {n}: unknown key '{key}'")),
         }
     }
@@ -158,6 +179,13 @@ mod tests {
     fn odd_width_rejected_with_line() {
         let err = parse("[camera]\n; c\nwidth = 1921\n").unwrap_err();
         assert!(err.contains("line 3") && err.contains("width"), "{err}");
+    }
+
+    #[test]
+    fn backend_values() {
+        assert_eq!(parse("[camera]\nbackend = dshow\n").unwrap().backend, BackendSel::DirectShow);
+        assert_eq!(parse("[camera]\nbackend = MF\n").unwrap().backend, BackendSel::MediaFoundation);
+        assert!(parse("[camera]\nbackend = kernel\n").unwrap_err().contains("backend"));
     }
 
     #[test]

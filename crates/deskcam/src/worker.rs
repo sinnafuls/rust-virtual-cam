@@ -7,15 +7,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use deskcam_proto::{Section, StreamInfo, now_ms, paths, stream_info};
+use deskcam_proto::{Section, StreamInfo, now_ms, os, paths, stream_info};
 use windows::Win32::Media::MediaFoundation::{MF_VERSION, MFSTARTUP_FULL, MFShutdown, MFStartup};
 use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize};
 
+use crate::backend::Backend;
 use crate::capture::Capture;
 use crate::config::{Config, FpsSel};
 use crate::log::log;
 use crate::monitor;
-use crate::vcam::VirtualCamera;
 
 const OPEN_RETRY_MS: u64 = 250;
 const IDLE_SLEEP: Duration = Duration::from_millis(250);
@@ -62,6 +62,14 @@ pub fn spawn(cfg: Config, stop: Arc<AtomicBool>, report: impl Fn(Status) + Send 
 }
 
 fn run(cfg: &Config, stop: &AtomicBool, report: &dyn Fn(Status)) {
+    let build = os::build();
+    log!("Windows build {build}");
+    if build < os::MIN_BUILD {
+        return report(Status::Error(format!(
+            "DeskCam needs Windows 10 version 1903 (build {}) or newer; this is build {build}",
+            os::MIN_BUILD
+        )));
+    }
     let monitors = monitor::enumerate();
     for m in &monitors {
         log!("{}", monitor::describe(m));
@@ -82,14 +90,14 @@ fn run(cfg: &Config, stop: &AtomicBool, report: &dyn Fn(Status)) {
     {
         return report(Status::Error(format!("cannot write {}: {e}", paths::stream_file().display())));
     }
-    let _vcam = match VirtualCamera::create(&cfg.name) {
-        Ok(v) => v,
+    let backend = match Backend::start(cfg, info) {
+        Ok(b) => b,
         Err(e) => {
             log!("{e}");
             return report(Status::Error(e));
         }
     };
-    log!("virtual camera '{}' registered", cfg.name);
+    log!("camera '{}' ready ({})", cfg.name, backend.kind());
     report(Status::Idle);
 
     let interval = Duration::from_nanos(1_000_000_000 / fps as u64);
@@ -101,7 +109,7 @@ fn run(cfg: &Config, stop: &AtomicBool, report: &dyn Fn(Status)) {
     while !stop.load(Ordering::Acquire) {
         let now = now_ms();
         if section.is_none() && now >= next_open {
-            section = Section::open(info.width, info.height, true);
+            section = backend.open_section(info);
             next_open = now + OPEN_RETRY_MS;
             if section.is_some() {
                 log!("frame section opened");

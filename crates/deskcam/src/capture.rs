@@ -180,12 +180,18 @@ impl Capture {
         let pool_size = item.Size()?;
         let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, pool_size)?;
         let session = pool.CreateCaptureSession(&item)?;
-        session.SetIsCursorCaptureEnabled(cursor)?;
-        let borderless = GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless)
-            .and_then(|op| op.join())
-            .and_then(|_| session.SetIsBorderRequired(false));
-        if let Err(e) = borderless {
-            log!("borderless capture unavailable: {e}");
+        // IsCursorCaptureEnabled needs Windows 10 2004; older builds always draw the cursor.
+        if let Err(e) = session.SetIsCursorCaptureEnabled(cursor) {
+            log!("cursor setting unavailable: {e}");
+        }
+        // Windows 10 has no borderless capture: the yellow border shows on screen (not in frames).
+        if deskcam_proto::os::build() >= deskcam_proto::os::BORDERLESS_BUILD {
+            let borderless = GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless)
+                .and_then(|op| op.join())
+                .and_then(|_| session.SetIsBorderRequired(false));
+            if let Err(e) = borderless {
+                log!("borderless capture unavailable: {e}");
+            }
         }
         if let Err(e) = session.SetMinUpdateInterval(TimeSpan { Duration: 10_000_000 / fps.max(1) as i64 }) {
             log!("MinUpdateInterval unavailable: {e}");
