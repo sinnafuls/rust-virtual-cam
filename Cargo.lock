@@ -12,6 +12,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "deskcam-dshow"
+version = "0.1.0"
+dependencies = [
+ "deskcam-proto",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "deskcam-proto"
 version = "0.1.0"
 dependencies = [

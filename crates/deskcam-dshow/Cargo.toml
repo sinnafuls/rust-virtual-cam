@@ -1,0 +1,29 @@
+[package]
+name = "deskcam-dshow"
+description = "DirectShow capture filter exposing the DeskCam camera on Windows 10"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+name = "deskcam_dshow"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+deskcam-proto.workspace = true
+windows-core.workspace = true
+
+[dependencies.windows]
+workspace = true
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media",
+    "Win32_Media_DirectShow",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemServices",
+]
