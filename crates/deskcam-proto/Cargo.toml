@@ -1,0 +1,21 @@
+[package]
+name = "deskcam-proto"
+description = "Shared contract between the DeskCam app and its media source DLL"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+windows-core.workspace = true
+
+[dependencies.windows]
+workspace = true
+features = [
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_UI_Shell",
+    "Win32_System_Com",
+    "Win32_System_SystemInformation",
+]
