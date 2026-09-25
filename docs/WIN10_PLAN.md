@@ -120,17 +120,18 @@ We write this without Microsoft's C++ `strmbase` base classes, so we implement t
 | Object | Interfaces | Notes |
 |---|---|---|
 | `Filter` | `IBaseFilter` (+ `IMediaFilter`, `IPersist`), `IAMFilterMiscFlags` (`AM_FILTER_MISC_FLAGS_IS_SOURCE`), `ISpecifyPropertyPages` (optional, skip) | Tracks the state (Stopped/Paused/Running), the graph (`IFilterGraph`, weak), the reference clock (`IReferenceClock`) and `tStart`. Exposes exactly one pin. |
-| `OutputPin` | `IPin`, `IAMStreamConfig`, `IKsPropertySet` (returns `PIN_CATEGORY_CAPTURE` for `AMPROPERTY_PIN_CATEGORY`, which is required for apps to treat it as a capture pin), `IQualityControl` (no-op), `IAMPushSource` (optional, latency = one frame) | Connection negotiation, allocator negotiation via `IMemInputPin::GetAllocator`/`NotifyAllocator` + `DecideBufferSize` |
+| `OutputPin` | `IPin`, `IAMStreamConfig`, `IKsPropertySet` (returns `PIN_CATEGORY_CAPTURE` for `AMPROPERTY_PIN_CATEGORY`, which is required for apps to treat it as a capture pin). OBS ships without `IQualityControl`/`IAMPushSource`, so we leave them out of the MVP. | Connection negotiation, allocator negotiation via `IMemInputPin::GetAllocator`/`NotifyAllocator` + `DecideBufferSize` |
 | `EnumPins`, `EnumMediaTypes` | `IEnumPins`, `IEnumMediaTypes` | Small cloneable cursors over fixed lists |
 | class factory | `IClassFactory` | Same pattern as `deskcam-source/src/lib.rs` (`ObjGuard`, `DllCanUnloadNow`) |
 
 **Media types** (`AM_MEDIA_TYPE` + `VIDEOINFOHEADER`, `FORMAT_VideoInfo`), in preference order:
 
 1. `MEDIASUBTYPE_NV12`: a direct copy of the ring slot (what `write_frame` already does for MF)
-2. `MEDIASUBTYPE_YUY2`: CPU 4:2:0 → 4:2:2 repack. Several older apps and Discord's engine like it.
-3. `MEDIASUBTYPE_I420` / `IYUV`: a plane swizzle
-4. `MEDIASUBTYPE_RGB32`: reuse `deskcam_proto::color::nv12_row_to_bgrx`. **DirectShow RGB is bottom-up**
-   (positive `biHeight`), so write rows in reverse order.
+2. `MEDIASUBTYPE_I420`: a plane swizzle (U and V de-interleaved)
+3. `MEDIASUBTYPE_YUY2`: CPU 4:2:0 → 4:2:2 repack. Several older apps and Discord's engine like it.
+4. *(Optional, only if an app needs it)* `MEDIASUBTYPE_RGB32`: reuse `deskcam_proto::color::nv12_row_to_bgrx`.
+   **DirectShow RGB is bottom-up** (positive `biHeight`), so write rows in reverse order. OBS ships
+   without RGB, which suggests the three YUV formats cover mainstream apps.
 
 At first, resolution and fps are the single mode taken from `stream.bin`, loaded at filter creation exactly as
 `ClassFactory::CreateInstance` does today. `IAMStreamConfig::GetStreamCaps` reports one
@@ -170,6 +171,69 @@ quietly (the downstream filter is flushing).
 compile for x86. `AtomicU64` works on i686 (`cmpxchg8b`), and the mapped view is page-aligned. A 4K
 section (~37 MB) fits comfortably in a 32-bit address space.
 
+### Lessons from OBS Virtual Camera
+
+I read OBS's implementation as a reference: `obs-studio/plugins/win-dshow/virtualcam-module`,
+`plugins/win-dshow/virtualcam.c`, `shared/obs-shared-memory-queue`, and the `OutputFilter`/`OutputPin` COM
+plumbing in `obsproject/libdshowcapture/source/output-filter.{hpp,cpp}`.
+
+> **License boundary:** OBS is **GPL-2.0** and libdshowcapture is **LGPL-2.1**. DeskCam is MIT. Use them
+> only to learn *what* a working DirectShow virtual camera does. Write our code from the DirectShow
+> documentation, and do not translate their source line by line.
+
+**What OBS confirms about our design**
+
+| Our plan | OBS |
+|---|---|
+| DirectShow filter under `CLSID_VideoInputDeviceCategory` | Same. OBS uses DirectShow on **every** Windows version, including 11 (it never calls `MFCreateVirtualCamera`), and it works in Discord, Chrome, Zoom and Teams. |
+| Writer app creates the section in the user session; filter opens it | Same. `video_queue_create` makes `OBSVirtualCamVideo` with no prefix, which is session-local, the equivalent of `Local\`. |
+| Resolution known before the app starts, from `stream.bin` | Same idea. The filter constructor reads `%APPDATA%\obs-virtualcam.txt` (`"WxHxinterval"`), which OBS writes when the camera starts. |
+| Object set: filter + one output pin + 2 enumerators + class factory | Same: `IBaseFilter`, `IPin`, `IAMStreamConfig`, `IKsPropertySet` (only `AMPROPERTY_PIN_CATEGORY` → `PIN_CATEGORY_CAPTURE`), and `IAMFilterMiscFlags` → `AM_FILTER_MISC_FLAGS_IS_SOURCE`. No `IAMPushSource`, `IQualityControl` or property pages, **so they are dropped from the MVP.** |
+| Registration: HKCR CLSID + `IFilterMapper2::RegisterFilter`, `MERIT_DO_NOT_USE` | Same. The pin type is registered as `MEDIATYPE_Video`/`MEDIASUBTYPE_NV12`. It exports `DllInstall` too. x86, x64 and ARM64 DLLs are registered separately. The friendly name is hard-coded, so OBS doesn't support renaming either. |
+
+**Changes to our plan based on OBS**
+
+1. **Formats:** OBS offers only **NV12, I420 and YUY2** (no RGB), and that is enough for every mainstream
+   app. Ship those three in Phase 2a. Make RGB32 optional and add it only if a real app needs it.
+2. **One mode per format:** OBS advertises a single resolution/fps (the current source's), not a list.
+   That matches our "one mode from `stream.bin`" plan.
+3. **Resolution mismatch:** if the source resolution changes while an app still holds the filter, OBS keeps
+   the negotiated output size and **scales on the CPU** (`tiny-nv12-scale`, nearest neighbour). Our section
+   name contains `WxH`, so without handling this a filter would wait forever on the old name. **Add:**
+   the filter re-reads `stream.bin` when the writer has been gone for a while, opens the new section, and
+   nearest-neighbour scales into the negotiated size. This is a small function of our own in `deskcam-proto`
+   and can be unit tested.
+4. **Placeholder when DeskCam isn't running:** OBS shows a bundled image (decoded with GDI+ and scaled),
+   and falls back to flat grey (`memset 127`). We start with black, as now. A placeholder image is a later polish item.
+5. **Thread lifecycle:** OBS creates the delivery thread in the filter constructor, blocks it on a
+   "start" event that `Pause()` signals, and stops it with a "stop" event in the destructor. Pacing is an
+   absolute deadline (`sleepto_100ns`: `Sleep(ms-1)` then spin). Our `Instant`-based loop from
+   `media_stream::delivery_loop` already does the same job.
+6. **Allocator negotiation (at `Connect`):** call `IMemInputPin::GetAllocator`. On
+   `VFW_E_NO_ALLOCATOR`, fall back to `CoCreateInstance(CLSID_MemoryAllocator)`. If
+   `GetAllocatorRequirements` is `E_NOTIMPL`, default to **4 buffers, 32-byte alignment**. Set `cbBuffer` = frame size,
+   then `SetProperties`, then `NotifyAllocator(alloc, FALSE)`. **Commit** on Stopped→Paused.
+7. **Per-sample:** `GetBuffer` → `SetActualDataLength` → `SetSyncPoint(TRUE)` / `SetDiscontinuity(FALSE)` /
+   `SetPreroll(FALSE)` → fill → `SetTime` + `SetMediaTime` → `Receive`. After a format change, attach the
+   new type once with `IMediaSample::SetMediaType`.
+8. **Stop:** call `BeginFlush()`/`EndFlush()` on the connected pin so downstream drops queued samples.
+9. **Timestamps:** OBS stamps samples with **raw** `IReferenceClock::GetTime()` and adds one interval per frame.
+   The DirectShow docs say capture timestamps are *stream time* (`clock - tStart`). We will follow the
+   docs. If an app misbehaves, OBS's approach is a known-working fallback.
+10. **Connect:** OBS offers only its current media type to `ReceiveConnection` and doesn't walk the peer's
+    types. That's enough, because apps pick a format through `IAMStreamConfig::SetFormat` first.
+
+**Where we deliberately differ from OBS**
+
+- **`QueryAccept` / `SetFormat`:** OBS accepts *any* media type. We check subtype, size and
+  `FORMAT_VideoInfo` and return `VFW_E_INVALIDMEDIATYPE` otherwise, so bad input from an app can't
+  corrupt buffer sizes.
+- **Demand-driven capture:** OBS writes frames whenever its virtual camera is on. We keep the reader
+  heartbeat, so the desktop is only captured while an app is actually pulling frames.
+- **Section security:** OBS relies on the default DACL. We keep an explicit SDDL (Phase 1.3).
+- **Frame integrity:** OBS's queue has no torn-frame protection; it just keeps 3 slots and a read index,
+  and after 10 repeated indices it treats the source as stalled. Our seqlock `FrameRing` stays.
+
 ### Phase 3: Installer and uninstaller
 
 `scripts/install.ps1`:
@@ -194,8 +258,8 @@ if ($build -ge 22000) {
 
 ### Phase 4: Testing
 
-1. **Unit tests** (any OS with `cargo test` on Windows): media-type builders, YUY2/I420/bottom-up RGB32
-   converters (golden pixels, like `color.rs`), and `VIDEOINFOHEADER` sizes/strides.
+1. **Unit tests** (any OS with `cargo test` on Windows): media-type builders, I420/YUY2 converters, the
+   nearest-neighbour NV12 scaler, (golden pixels, like `color.rs`), and `VIDEOINFOHEADER` sizes/strides.
 2. **Integration test** `crates/deskcam-dshow/tests/graph.rs`, without registration (mirrors
    `deskcam-source/tests/activate.rs`): instantiate the filter through its Rust constructor, build a filter graph
    with `CLSID_FilterGraph`, add the filter and a **Null Renderer** (or a minimal Rust sink that counts
@@ -246,7 +310,7 @@ if ($build -ge 22000) {
 1. **Phase 0**: dynamic `MFCreateVirtualCamera`, OS detection, non-fatal cursor flag, manifest.
 2. **Phase 1**: backend abstraction plus `Section::create_local` and the `backend=` config key (still Win11 only).
 3. **Phase 2a**: `deskcam-dshow` with NV12 only, registration, graph integration test, and `probe --dshow`.
-4. **Phase 2b**: YUY2 / I420 / RGB32 formats, the i686 build, and `IAMPushSource`.
+4. **Phase 2b**: I420 / YUY2 formats, the i686 build, re-reading `stream.bin` plus nearest-neighbour scaling when the resolution changes, and flushing on Stop.
 5. **Phase 3**: installer and uninstaller.
 6. **Phase 4/5**: CI workflow, README, and a manual test pass on a Win10 VM.
 7. *(Optional)* Phase 6: Desktop Duplication capture backend.
@@ -256,7 +320,9 @@ Phase 3–5 ~200 LOC + docs.
 
 ## References
 
-- OBS Virtual Camera (DirectShow part): `obs-studio/plugins/win-dshow/virtualcam-module`
+- OBS Virtual Camera (GPL-2.0, reference only): `obs-studio/plugins/win-dshow/virtualcam-module`,
+  `shared/obs-shared-memory-queue`, and `obsproject/libdshowcapture` `source/output-filter.cpp` (LGPL-2.1).
+  See "Lessons from OBS Virtual Camera" above.
 - `schellingb/UnityCapture`, `tshino/softcam`, `webcamoid/akvirtualcamera`: DirectShow virtual cameras
 - Microsoft docs: *Registering a DirectShow Filter* / `IFilterMapper2::RegisterFilter`, *Writing Capture
   Filters* (`PIN_CATEGORY_CAPTURE`, `IKsPropertySet`, `IAMStreamConfig`)
