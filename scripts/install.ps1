@@ -72,10 +72,28 @@ if (-not $UseDShow) {
 New-Item -ItemType Directory -Force $Inst, $Data | Out-Null
 Install-File "$BuildDir\deskcam.exe" $Inst
 
-# Users edit config.ini and the app writes stream.bin; LocalService (Frame Server) and
-# AppContainer consumers read them.
-icacls $Data /grant '*S-1-5-32-545:(OI)(CI)M' '*S-1-5-19:(OI)(CI)RX' '*S-1-15-2-1:(OI)(CI)RX' | Out-Null
+# Users edit config.ini and the app writes stream.bin; LocalService (Frame Server), AppContainer
+# and LPAC consumers (the DirectShow filter inside sandboxed apps) read them.
+icacls $Data /grant '*S-1-5-32-545:(OI)(CI)M' '*S-1-5-19:(OI)(CI)RX' '*S-1-15-2-1:(OI)(CI)RX' '*S-1-15-2-2:(OI)(CI)RX' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls failed: $LASTEXITCODE" }
+
+# The app picks its backend from config.ini; it must match the camera registered below, or the
+# camera stays black (e.g. -Backend dshow on Windows 11 with the default 'backend = auto').
+$Config = "$Data\config.ini"
+$Utf8 = New-Object Text.UTF8Encoding $false   # no BOM
+if (Test-Path $Config) {
+    $text = [IO.File]::ReadAllText($Config)
+    if ($text -match '(?m)^[ \t]*backend[ \t]*=') {
+        $text = $text -replace '(?m)^[ \t]*backend[ \t]*=[^\r\n]*', "backend = $Backend"
+    } elseif ($text -match '(?m)^[ \t]*\[camera\]') {
+        $text = $text -replace '(?m)^[ \t]*\[camera\][ \t]*(?=\r?$)', ('$0' + "`r`nbackend = $Backend")
+    } else {
+        $text += "`r`n[camera]`r`nbackend = $Backend`r`n"
+    }
+    [IO.File]::WriteAllText($Config, $text, $Utf8)
+} elseif ($Backend -ne 'auto') {
+    [IO.File]::WriteAllText($Config, "; Set by install.ps1 -Backend $Backend`r`n[camera]`r`nbackend = $Backend`r`n", $Utf8)
+}
 
 if ($UseDShow) {
     # Drop a Windows 11 registration so apps don't list the camera twice.

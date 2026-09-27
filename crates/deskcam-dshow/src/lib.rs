@@ -26,7 +26,8 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use deskcam_proto::{DSHOW_CLSID, DSHOW_CLSID_STR, com, paths, stream_info};
 use windows::Win32::Foundation::{
-    CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_INVALIDARG, E_POINTER, HINSTANCE, HMODULE, S_FALSE, S_OK,
+    CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_INVALIDARG, E_POINTER, ERROR_FILE_NOT_FOUND, HINSTANCE,
+    HMODULE, S_FALSE, S_OK,
 };
 use windows::Win32::Media::DirectShow::{
     IFilterMapper2, MERIT_DO_NOT_USE, REGFILTER2, REGFILTER2_0, REGFILTER2_0_0, REGFILTERPINS, REGPINTYPES,
@@ -182,9 +183,14 @@ fn register(name: &str) -> windows_core::Result<()> {
 }
 
 fn unregister() -> windows_core::Result<()> {
-    let _ = with_mapper(|mapper| unsafe {
+    let removed = with_mapper(|mapper| unsafe {
         mapper.UnregisterFilter(&CLSID_VideoInputDeviceCategory, PCWSTR::null(), &DSHOW_CLSID)
     });
+    // Not registered is fine; anything else would leave a camera entry that cannot be created.
+    match removed {
+        Err(e) if e.code() != ERROR_FILE_NOT_FOUND.to_hresult() => return Err(e),
+        _ => {}
+    }
     com::unregister_inproc_server(DSHOW_CLSID_STR)
 }
 

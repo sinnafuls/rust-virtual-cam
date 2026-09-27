@@ -77,7 +77,8 @@ fn parse_even(key: &str, value: &str, min: u32, max: u32, line: usize) -> Result
 pub fn parse(text: &str) -> Result<Config, String> {
     let mut cfg = Config::default();
     let mut in_camera = false;
-    for (idx, raw) in text.lines().enumerate() {
+    // Notepad on older Windows 10 builds saves UTF-8 with a byte order mark.
+    for (idx, raw) in text.trim_start_matches('\u{feff}').lines().enumerate() {
         let n = idx + 1;
         let line = raw.trim();
         if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
@@ -179,6 +180,12 @@ mod tests {
     fn odd_width_rejected_with_line() {
         let err = parse("[camera]\n; c\nwidth = 1921\n").unwrap_err();
         assert!(err.contains("line 3") && err.contains("width"), "{err}");
+    }
+
+    #[test]
+    fn byte_order_mark_is_ignored() {
+        let with_bom = format!("\u{feff}{DEFAULT_TEXT}");
+        assert_eq!(parse(&with_bom).unwrap(), Config::default());
     }
 
     #[test]

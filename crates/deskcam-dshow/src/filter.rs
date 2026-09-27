@@ -58,6 +58,10 @@ pub(crate) struct Core {
     pub st: Mutex<State>,
     pub wake: Condvar,
     pub frames: AtomicU64,
+    /// Held for the whole of Stop/Pause/Run, including the thread join, so a concurrent Pause can
+    /// never start a new stream while an old one is still shutting down. Never taken by the
+    /// delivery thread's own calls (a downstream callback may Stop the graph from it).
+    pub transition: Mutex<()>,
 }
 
 impl Core {
@@ -65,15 +69,29 @@ impl Core {
         self.st.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    fn transition_lock(&self) -> Option<MutexGuard<'_, ()>> {
+        (!stream::on_delivery_thread()).then(|| self.transition.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+
     /// Stops streaming: decommits the allocator (unblocking `GetBuffer`), flushes downstream and
     /// joins the delivery thread, so no sample is delivered after this returns.
+    ///
+    /// Called on the delivery thread itself (a downstream callback stopped the graph), it cannot
+    /// join itself: the thread exits once the callback returns and sees `Stopped`, and the next
+    /// Pause joins it.
     pub fn stop(&self) {
+        let _transition = self.transition_lock();
+        self.stop_locked();
+    }
+
+    fn stop_locked(&self) {
+        let own_thread = stream::on_delivery_thread();
         let (thread, peer, allocator) = {
             let mut st = self.lock();
             st.filter_state = State_Stopped;
             let peer = st.conn.as_ref().map(|c| c.peer.clone());
             let allocator = st.conn.as_ref().map(|c| c.allocator.clone());
-            (st.thread.take(), peer, allocator)
+            (if own_thread { None } else { st.thread.take() }, peer, allocator)
         };
         self.wake.notify_all();
         unsafe {
@@ -90,6 +108,34 @@ impl Core {
         if let Some(p) = &peer {
             let _ = unsafe { p.EndFlush() };
         }
+    }
+
+    /// Stopped → Paused: commits the allocator and starts a delivery thread unless one is still
+    /// usable. Caller holds `transition` (or is the delivery thread itself).
+    fn pause_locked(&self, core: &Arc<Core>) -> windows_core::Result<()> {
+        // A thread left behind by a Stop from its own callback has seen `Stopped` and is exiting;
+        // join it. If we *are* that thread, keep it: it carries on once the callback returns.
+        let leftover = {
+            let mut st = self.lock();
+            let foreign = st.thread.as_ref().is_some_and(|t| t.thread().id() != std::thread::current().id());
+            if st.filter_state == State_Stopped && foreign { st.thread.take() } else { None }
+        };
+        if let Some(t) = leftover {
+            let _ = t.join();
+        }
+        let mut st = self.lock();
+        if st.filter_state == State_Stopped
+            && let Some(conn) = &st.conn
+        {
+            unsafe { conn.allocator.Commit()? };
+            if st.thread.is_none() {
+                st.thread = Some(stream::spawn(core.clone()));
+            }
+        }
+        st.filter_state = State_Paused;
+        drop(st);
+        self.wake.notify_all();
+        Ok(())
     }
 }
 
@@ -116,6 +162,7 @@ pub fn create(info: StreamInfo) -> windows_core::Result<ComObject<Filter>> {
         }),
         wake: Condvar::new(),
         frames: AtomicU64::new(0),
+        transition: Mutex::new(()),
     });
     let pin = ComObject::new(OutputPin::new(core.clone()));
     let filter = ComObject::new(Filter { core, pin: pin.clone(), _guard: ObjGuard::new() });
@@ -136,6 +183,12 @@ impl Drop for Filter {
         if self.core.lock().thread.is_some() {
             self.core.stop();
         }
+        // An app that releases us without disconnecting would leave a cycle: downstream pin →
+        // our pin → Core → downstream pin. Break it so both pins and the DLL can go away.
+        let conn = self.core.lock().conn.take();
+        if let Some(conn) = conn {
+            let _ = unsafe { conn.peer.Disconnect() };
+        }
     }
 }
 
@@ -153,29 +206,22 @@ impl IPersist_Impl for Filter_Impl {
 
 impl IMediaFilter_Impl for Filter_Impl {
     fn Stop(&self) -> windows_core::Result<()> {
+        let _transition = self.core.transition_lock();
         if self.core.lock().filter_state != State_Stopped {
-            self.core.stop();
+            self.core.stop_locked();
         }
         Ok(())
     }
 
     fn Pause(&self) -> windows_core::Result<()> {
-        let mut st = self.core.lock();
-        if st.filter_state == State_Stopped
-            && let Some(conn) = &st.conn
-        {
-            unsafe { conn.allocator.Commit()? };
-            st.thread = Some(stream::spawn(self.core.clone()));
-        }
-        st.filter_state = State_Paused;
-        drop(st);
-        self.core.wake.notify_all();
-        Ok(())
+        let _transition = self.core.transition_lock();
+        self.core.pause_locked(&self.core)
     }
 
     fn Run(&self, tstart: i64) -> windows_core::Result<()> {
+        let _transition = self.core.transition_lock();
         if self.core.lock().filter_state == State_Stopped {
-            IMediaFilter_Impl::Pause(self)?;
+            self.core.pause_locked(&self.core)?;
         }
         let mut st = self.core.lock();
         st.t_start = tstart;

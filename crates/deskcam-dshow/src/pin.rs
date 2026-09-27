@@ -8,7 +8,7 @@ use windows::Win32::Media::DirectShow::{
     ALLOCATOR_PROPERTIES, AMPROPERTY_PIN_CATEGORY, E_PROP_ID_UNSUPPORTED, E_PROP_SET_UNSUPPORTED, IAMStreamConfig,
     IAMStreamConfig_Impl, IBaseFilter, IEnumMediaTypes, IFilterGraph, IMemAllocator, IMemInputPin, IPin, IPin_Impl,
     PIN_DIRECTION, PIN_INFO, PINDIR_OUTPUT, State_Stopped, VFW_E_ALREADY_CONNECTED, VFW_E_INVALIDMEDIATYPE,
-    VFW_E_NO_ACCEPTABLE_TYPES, VFW_E_NOT_CONNECTED, VFW_E_NOT_STOPPED, VIDEO_STREAM_CONFIG_CAPS,
+    VFW_E_NO_ACCEPTABLE_TYPES, VFW_E_NOT_CONNECTED, VFW_E_NOT_IN_GRAPH, VFW_E_NOT_STOPPED, VIDEO_STREAM_CONFIG_CAPS,
 };
 use windows::Win32::Media::KernelStreaming::{IKsPropertySet, IKsPropertySet_Impl};
 use windows::Win32::Media::MediaFoundation::{
@@ -75,7 +75,7 @@ fn negotiate_allocator(peer: &IPin, vt: &VideoType) -> windows_core::Result<Conn
     let bytes = vt.frame_bytes() as i32;
     let mut request = unsafe { input.GetAllocatorRequirements() }.unwrap_or_default();
     request.cBuffers = request.cBuffers.max(MIN_BUFFERS);
-    request.cbBuffer = bytes;
+    request.cbBuffer = request.cbBuffer.max(bytes);
     request.cbAlign = request.cbAlign.max(1);
     request.cbPrefix = request.cbPrefix.max(0);
     let setup = |allocator: IMemAllocator| -> windows_core::Result<IMemAllocator> {
@@ -262,16 +262,29 @@ impl IAMStreamConfig_Impl for OutputPin_Impl {
         if !accepted {
             return Err(VFW_E_INVALIDMEDIATYPE.into());
         }
-        {
+        // Our Connect offers `vtype` first, so it must hold the new type during Reconnect;
+        // restore the old one if the switch does not go through.
+        let old = {
             let mut st = self.core.lock();
+            let old = (st.vtype, st.type_changed);
             st.vtype = vt;
             st.type_changed = true;
+            old
+        };
+        let result = match unsafe { IFilterGraph::from_raw_borrowed(&graph) } {
+            Some(graph) => {
+                let me: IPin = self.to_interface();
+                unsafe { graph.Reconnect(&me) }
+            }
+            // No graph to reconnect through: only a change that fits the existing buffers works.
+            None if vt.frame_bytes() == old.0.frame_bytes() => Ok(()),
+            None => Err(VFW_E_NOT_IN_GRAPH.into()),
+        };
+        if result.is_err() {
+            let mut st = self.core.lock();
+            (st.vtype, st.type_changed) = old;
         }
-        if let Some(graph) = unsafe { IFilterGraph::from_raw_borrowed(&graph) } {
-            let me: IPin = self.to_interface();
-            unsafe { graph.Reconnect(&me)? };
-        }
-        Ok(())
+        result
     }
 
     fn GetFormat(&self) -> windows_core::Result<*mut AM_MEDIA_TYPE> {

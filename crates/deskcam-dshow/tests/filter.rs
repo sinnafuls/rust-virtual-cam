@@ -124,3 +124,81 @@ fn streams_into_null_renderer_and_stops_cleanly() {
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(object.frames_delivered(), frames, "no delivery after Stop");
 }
+
+/// Stop racing Pause/Run from other threads must never hang, and nothing may be delivered once
+/// the final Stop returns.
+#[test]
+fn concurrent_state_changes_never_hang() {
+    com();
+    let object = filter::create(INFO).unwrap();
+    let filter: IBaseFilter = object.to_interface();
+    let renderer: IBaseFilter = match unsafe { CoCreateInstance(&CLSID_NULL_RENDERER, None, CLSCTX_INPROC_SERVER) } {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("skipping: Null Renderer (qedit.dll) unavailable: {e}");
+            return;
+        }
+    };
+    let graph: IGraphBuilder = unsafe { CoCreateInstance(&CLSID_FilterGraph, None, CLSCTX_INPROC_SERVER).unwrap() };
+    unsafe {
+        graph.AddFilter(&filter, w!("DeskCam")).unwrap();
+        graph.AddFilter(&renderer, w!("Null Renderer")).unwrap();
+        graph.Connect(&only_pin(&filter), &only_pin(&renderer)).unwrap();
+    }
+
+    // Drive our filter directly (the graph manager would serialize these calls itself).
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let starter = {
+        let f = windows_core::AgileReference::new(&filter).unwrap();
+        let tx = done_tx.clone();
+        std::thread::spawn(move || {
+            com();
+            let f = f.resolve().unwrap();
+            for _ in 0..200 {
+                unsafe {
+                    let _ = f.Pause();
+                    let _ = f.Run(0);
+                }
+            }
+            tx.send(()).unwrap();
+        })
+    };
+    let stopper = {
+        let f = windows_core::AgileReference::new(&filter).unwrap();
+        std::thread::spawn(move || {
+            com();
+            let f = f.resolve().unwrap();
+            for _ in 0..200 {
+                let _ = unsafe { f.Stop() };
+            }
+            done_tx.send(()).unwrap();
+        })
+    };
+    for _ in 0..2 {
+        done_rx.recv_timeout(Duration::from_secs(30)).expect("state changes hung");
+    }
+    starter.join().unwrap();
+    stopper.join().unwrap();
+
+    unsafe { filter.Stop().unwrap() };
+    let frames = object.frames_delivered();
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(object.frames_delivered(), frames, "no delivery after Stop");
+}
+
+/// Skipping past the end must report S_FALSE, including counts that would overflow a 32-bit
+/// cursor.
+#[test]
+fn enumerator_skip_past_end() {
+    com();
+    let filter: IBaseFilter = filter::create(INFO).unwrap().to_interface();
+    let pins = unsafe { filter.EnumPins().unwrap() };
+    let mut out = [None];
+    let _ = unsafe { pins.Next(&mut out, None) };
+    // The wrapper maps S_FALSE to Ok; read the raw HRESULT.
+    let hr = unsafe { (Interface::vtable(&pins).Skip)(Interface::as_raw(&pins), u32::MAX) };
+    assert_eq!(hr, windows::Win32::Foundation::S_FALSE);
+    let mut n = 0;
+    let _ = unsafe { pins.Next(&mut out, Some(&mut n)) };
+    assert_eq!(n, 0, "cursor must stay at the end");
+}

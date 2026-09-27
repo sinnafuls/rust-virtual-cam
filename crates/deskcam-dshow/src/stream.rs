@@ -24,12 +24,22 @@ const SECTION_RETRY_MS: u64 = 500;
 /// After the writer has been gone this long, reopen: the app may be back with another size.
 const REOPEN_AFTER_GONE_MS: u64 = 3000;
 
+thread_local! {
+    static ON_DELIVERY_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// True on a delivery thread, e.g. inside a downstream callback that stops the graph.
+pub(crate) fn on_delivery_thread() -> bool {
+    ON_DELIVERY_THREAD.with(|f| f.get())
+}
+
 pub(crate) fn spawn(core: Arc<Core>) -> JoinHandle<()> {
     let guard = ObjGuard::new();
     std::thread::Builder::new()
         .name("deskcam-dshow".into())
         .spawn(move || {
             let _guard = guard;
+            ON_DELIVERY_THREAD.with(|f| f.set(true));
             run(&core);
         })
         .expect("spawn delivery thread")

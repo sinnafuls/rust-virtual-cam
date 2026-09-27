@@ -19,10 +19,12 @@ use crate::layout::{FrameRing, Namespace, section_name, section_size};
 /// Everyone, AppContainers and LPAC read (sandboxed consumers).
 pub const SECTION_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;LS)(A;;GRGW;;;AU)(A;;GR;;;WD)(A;;GR;;;AC)(A;;GR;;;S-1-15-2-2)";
 
-/// Windows 10 section created by the app: same DACL, plus a low integrity label so low-IL
-/// consumer processes (sandboxed browser helpers) can write the reader heartbeat too.
+/// Windows 10 section created by the app. Every consumer loads the DirectShow filter in its own
+/// process and must write the reader heartbeat, or capture never starts. So besides the global
+/// DACL: AppContainer and LPAC processes get write access too, and a low integrity label lets
+/// low-IL processes (sandboxed browser helpers) write.
 pub const SECTION_SDDL_LOCAL: &str =
-    "D:P(A;;GA;;;SY)(A;;GA;;;LS)(A;;GRGW;;;AU)(A;;GR;;;WD)(A;;GR;;;AC)(A;;GR;;;S-1-15-2-2)S:(ML;;NW;;;LW)";
+    "D:P(A;;GA;;;SY)(A;;GA;;;LS)(A;;GRGW;;;AU)(A;;GR;;;WD)(A;;GRGW;;;AC)(A;;GRGW;;;S-1-15-2-2)S:(ML;;NW;;;LW)";
 
 pub struct Section {
     handle: HANDLE,

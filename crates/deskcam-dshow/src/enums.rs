@@ -40,7 +40,7 @@ fn next(
 }
 
 fn skip(pos: &AtomicUsize, len: usize, count: u32) -> windows_core::Result<()> {
-    let target = pos.load(Ordering::Relaxed) + count as usize;
+    let target = pos.load(Ordering::Relaxed).saturating_add(count as usize);
     pos.store(target.min(len), Ordering::Relaxed);
     if target <= len { Ok(()) } else { Err(windows_core::Error::from_hresult(S_FALSE)) }
 }

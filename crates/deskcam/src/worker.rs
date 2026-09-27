@@ -168,8 +168,12 @@ fn run(cfg: &Config, stop: &AtomicBool, report: &dyn Fn(Status)) {
                     std::thread::sleep(IDLE_SLEEP);
                     continue;
                 }
-                // Stay on the frame grid; after a stall resume at once without replaying a backlog.
-                next_frame = (next_frame + interval).max(tick_start);
+                // Stay on the frame grid. After a stall, restart the grid one interval after this
+                // frame: never replay a backlog, never publish two frames closer than `interval`.
+                next_frame += interval;
+                if next_frame <= tick_start {
+                    next_frame = tick_start + interval;
+                }
             }
             _ => std::thread::sleep(IDLE_SLEEP),
         }

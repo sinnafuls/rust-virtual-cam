@@ -54,10 +54,28 @@ App process (Discord, Chrome, OBS, ...)                 install.ps1 registered, 
 - **Locked DLLs on reinstall:** apps keep the filter loaded, so `install.ps1` renames an in-use DLL and
   copies the new one next to it. The leftover is deleted on a later install.
 
+### Fixed after code review
+
+- Stop/Pause/Run hold a transition lock through the thread join, so a concurrent Pause cannot
+  start a stream while the old one is still stopping.
+- A Stop issued from a downstream callback on the delivery thread no longer joins that thread
+  (it would panic); the thread exits after the callback, and the next Pause joins it.
+- Releasing a connected filter without disconnecting now breaks the pin ↔ peer reference cycle.
+- `SetFormat` restores the previous type when `Reconnect` fails.
+- The allocator request keeps the downstream pin's larger `cbBuffer`.
+- Enumerator `Skip` no longer overflows on 32-bit.
+- `regsvr32 /u` reports mapper failures instead of leaving a camera entry behind.
+- The `Local\` section lets AppContainer and LPAC consumers write the heartbeat; `install.ps1`
+  grants LPAC read access to `C:\ProgramData\DeskCam`.
+- `install.ps1 -Backend …` writes the same `backend` into `config.ini`, so the app and the
+  registered camera always agree.
+- `config.ini` saved with a UTF-8 BOM (older Notepad) parses.
+
 ### Next steps
 
 1. Run CI on the branch and fix anything Windows-specific that `cargo check` could not catch.
-2. Test on a Windows 10 22H2 VM using the manual matrix in Phase 4.
+2. Test on a Windows 10 22H2 VM using the manual matrix in Phase 4. Needs build 18362 (1903) or
+   newer: a 1803 image cannot run DeskCam.
 3. `probe --dshow`: enumerate the device like an app does and save a snapshot.
 4. Optional: a placeholder image while `deskcam.exe` isn't running, and Desktop Duplication capture.
 
