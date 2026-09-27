@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "deskcam"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "deskcam-proto",
  "windows",
@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "deskcam-dshow"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "deskcam-proto",
  "windows",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "deskcam-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "windows",
  "windows-core",
@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "deskcam-source"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "deskcam-proto",
  "windows",

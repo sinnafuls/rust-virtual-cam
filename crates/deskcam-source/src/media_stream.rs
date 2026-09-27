@@ -70,16 +70,19 @@ forward_attributes!(MediaStream_Impl, attrs);
 fn media_type(info: StreamInfo, fps: u32, format: Format) -> windows_core::Result<IMFMediaType> {
     let (w, h) = (info.width, info.height);
     let t = unsafe { MFCreateMediaType()? };
+    // RGB32 is bottom-up (negative stride), the usual layout for uncompressed RGB. A top-down
+    // RGB type reaches DirectShow apps as a negative `biHeight` through the Frame Server bridge,
+    // and Discord's `discord_media` spins forever on that in its aspect-ratio GCD.
     let (subtype, stride, frame_bytes) = match format {
-        Format::Nv12 => (MFVideoFormat_NV12, w, w as u64 * h as u64 * 3 / 2),
-        Format::Rgb32 => (MFVideoFormat_RGB32, w * 4, w as u64 * h as u64 * 4),
+        Format::Nv12 => (MFVideoFormat_NV12, w as i32, w as u64 * h as u64 * 3 / 2),
+        Format::Rgb32 => (MFVideoFormat_RGB32, -((w * 4) as i32), w as u64 * h as u64 * 4),
     };
     unsafe {
         t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
         t.SetGUID(&MF_MT_SUBTYPE, &subtype)?;
         t.SetUINT64(&MF_MT_FRAME_SIZE, ((w as u64) << 32) | h as u64)?;
         t.SetUINT64(&MF_MT_FRAME_RATE, ((fps as u64) << 32) | 1)?;
-        t.SetUINT32(&MF_MT_DEFAULT_STRIDE, stride)?;
+        t.SetUINT32(&MF_MT_DEFAULT_STRIDE, stride as u32)?;
         t.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
         t.SetUINT32(&MF_MT_ALL_SAMPLES_INDEPENDENT, 1)?;
         t.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1u64 << 32) | 1)?;
@@ -386,7 +389,12 @@ fn fill_sample(st: &StreamState, sample: &IMFSample) -> windows_core::Result<()>
         unsafe { buffer.Lock(&mut data, Some(&mut max), None)? };
         let fits = max as usize >= needed;
         if fits {
-            write_frame(st, data, row_bytes as isize);
+            // Contiguous buffers follow MF_MT_DEFAULT_STRIDE: bottom-up RGB32 stores the top
+            // image row last.
+            match st.format {
+                Format::Nv12 => write_frame(st, data, row_bytes as isize),
+                Format::Rgb32 => write_frame(st, unsafe { data.add((rows - 1) * row_bytes) }, -(row_bytes as isize)),
+            }
         }
         unsafe { buffer.Unlock()? };
         if !fits {

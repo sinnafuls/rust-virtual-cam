@@ -31,4 +31,4 @@ features = [
 
 [dev-dependencies.windows]
 workspace = true
-features = ["Win32_System_Diagnostics_ToolHelp"]
+features = ["Win32_System_Diagnostics_ToolHelp", "Win32_Graphics_Gdi"]

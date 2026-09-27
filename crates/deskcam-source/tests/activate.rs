@@ -40,6 +40,37 @@ fn activator_exposes_configured_stream() {
     unsafe { act.DetachObject().unwrap() };
 }
 
+/// DirectShow apps see these types through the Frame Server's MF→DirectShow bridge. A
+/// top-down RGB type becomes a negative `biHeight`, which some consumers mishandle (Discord's
+/// `discord_media` spins forever in its aspect-ratio GCD), so every type must map to a
+/// positive height.
+#[test]
+fn directshow_view_of_every_type_has_positive_height() {
+    use windows::Win32::System::Com::CoTaskMemFree;
+
+    unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL).unwrap() };
+    let act = deskcam_source::activator::create(StreamInfo { width: 1920, height: 1080, fps: 30 }).unwrap();
+    let source: IMFMediaSource = unsafe { act.ActivateObject().unwrap() };
+    let pd = unsafe { source.CreatePresentationDescriptor().unwrap() };
+    let mut selected = Default::default();
+    let mut desc = None;
+    unsafe { pd.GetStreamDescriptorByIndex(0, &mut selected, &mut desc).unwrap() };
+    let handler = unsafe { desc.unwrap().GetMediaTypeHandler().unwrap() };
+
+    for i in 0..unsafe { handler.GetMediaTypeCount().unwrap() } {
+        let t = unsafe { handler.GetMediaTypeByIndex(i).unwrap() };
+        let mut am = AM_MEDIA_TYPE::default();
+        unsafe { MFInitAMMediaTypeFromMFMediaType(&t, FORMAT_VideoInfo, &mut am).unwrap() };
+        let vih = unsafe { (am.pbFormat as *const VIDEOINFOHEADER).read_unaligned() };
+        unsafe { CoTaskMemFree(Some(am.pbFormat as *const _)) };
+        let subtype = unsafe { t.GetGUID(&MF_MT_SUBTYPE).unwrap() };
+        assert_eq!(vih.bmiHeader.biWidth, 1920, "type {i} ({subtype:?})");
+        assert_eq!(vih.bmiHeader.biHeight, 1080, "type {i} ({subtype:?})");
+    }
+
+    unsafe { source.Shutdown().unwrap() };
+}
+
 fn next_event(generator: &IMFMediaEventGenerator) -> IMFMediaEvent {
     unsafe { generator.GetEvent(MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS(0)).unwrap() }
 }

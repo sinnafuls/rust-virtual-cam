@@ -42,7 +42,9 @@ fn friendly_name(act: &IMFActivate) -> String {
     }
 }
 
-fn write_bmp(path: &str, w: u32, h: u32, bgrx: &[u8]) -> std::io::Result<()> {
+/// `bottom_up` follows the negotiated `MF_MT_DEFAULT_STRIDE`; BMP uses the same sign convention
+/// (positive height = bottom-up), so the buffer is written as-is.
+fn write_bmp(path: &str, w: u32, h: u32, bottom_up: bool, bgrx: &[u8]) -> std::io::Result<()> {
     let size = (w * h * 4) as usize;
     let mut out = Vec::with_capacity(54 + size);
     out.extend_from_slice(b"BM");
@@ -51,7 +53,7 @@ fn write_bmp(path: &str, w: u32, h: u32, bgrx: &[u8]) -> std::io::Result<()> {
     out.extend_from_slice(&54u32.to_le_bytes());
     out.extend_from_slice(&40u32.to_le_bytes());
     out.extend_from_slice(&(w as i32).to_le_bytes());
-    out.extend_from_slice(&(-(h as i32)).to_le_bytes()); // top-down
+    out.extend_from_slice(&(if bottom_up { h as i32 } else { -(h as i32) }).to_le_bytes());
     out.extend_from_slice(&1u16.to_le_bytes());
     out.extend_from_slice(&32u16.to_le_bytes());
     out.extend_from_slice(&[0; 24]);
@@ -100,6 +102,7 @@ fn main() -> windows_core::Result<()> {
     let size = unsafe { current.GetUINT64(&MF_MT_FRAME_SIZE)? };
     let rate = unsafe { current.GetUINT64(&MF_MT_FRAME_RATE)? };
     let (w, h) = ((size >> 32) as u32, size as u32);
+    let bottom_up = unsafe { current.GetUINT32(&MF_MT_DEFAULT_STRIDE) }.is_ok_and(|s| (s as i32) < 0);
     println!(
         "negotiated {} {}x{} @ {}/{} fps",
         if args.nv12 { "NV12" } else { "RGB32" },
@@ -141,7 +144,7 @@ fn main() -> windows_core::Result<()> {
     };
     println!("mean luma of last frame: {mean:.1}");
     if !args.nv12 && last.len() >= pixels * 4 {
-        write_bmp(&args.out, w, h, &last).expect("write bmp");
+        write_bmp(&args.out, w, h, bottom_up, &last).expect("write bmp");
         println!("wrote {}", args.out);
     }
     unsafe {
