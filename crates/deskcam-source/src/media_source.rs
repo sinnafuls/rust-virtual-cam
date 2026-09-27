@@ -64,7 +64,6 @@ pub fn create(info: StreamInfo, activator_attrs: &IMFAttributes) -> windows_core
         _guard: ObjGuard::new(),
     });
     let source: IMFMediaSource = source.to_interface::<IMFMediaSourceEx>().cast()?;
-    stream.set_source(source.clone());
     trace(&format!("media source created {}x{}@{}", info.width, info.height, info.fps));
     Ok(source)
 }
@@ -141,6 +140,10 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
         if selected.as_bool() && !running {
             unsafe {
                 ours.SelectStream(0)?;
+                // Stream → source reference exists only while streaming (Shutdown clears it), so an
+                // activated-but-never-started source is freed as soon as its owner releases it.
+                let this = windows_core::IUnknownImpl::to_object(self);
+                self.stream.set_source(this.to_interface::<IMFMediaSourceEx>().cast()?);
                 let stream: IMFMediaStream2 = self.stream.to_interface();
                 queue.QueueEventParamUnk(MENewStream.0 as u32, &GUID::zeroed(), S_OK, &stream)?;
                 let ty = desc.GetMediaTypeHandler()?.GetCurrentMediaType()?;
