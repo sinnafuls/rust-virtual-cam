@@ -1,0 +1,58 @@
+name: Release
+
+# Push a tag like v0.1.0 (matching the workspace version in Cargo.toml) to build the installer and
+# publish it as a draft GitHub release. Review the draft, then publish it.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches Cargo version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'.TrimStart('v')
+          $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($tag -ne $cargo) { throw "Tag v$tag does not match workspace version $cargo in Cargo.toml" }
+          "VERSION=$tag" >> $env:GITHUB_ENV
+
+      - name: Install Rust targets
+        run: rustup target add i686-pc-windows-msvc
+
+      - name: Build
+        run: |
+          cargo build --release --locked -p deskcam -p deskcam-source -p deskcam-dshow
+          cargo build --release --locked --target i686-pc-windows-msvc -p deskcam-dshow
+
+      - name: Test
+        # deskcam-source needs the Frame Server, which Server runners lack.
+        run: |
+          cargo test --release --locked -p deskcam-proto -p deskcam -p deskcam-dshow
+          cargo test --release --locked --target i686-pc-windows-msvc -p deskcam-dshow
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; if ($LASTEXITCODE) { throw 'Inno Setup install failed' } }
+          & $iscc /Q "/DAppVersion=$env:VERSION" installer\deskcam.iss
+          if ($LASTEXITCODE) { throw "ISCC failed: $LASTEXITCODE" }
+          $exe = "DeskCam-Setup-$env:VERSION.exe"
+          "$((Get-FileHash "target\installer\$exe" -Algorithm SHA256).Hash.ToLower())  $exe" |
+            Set-Content target\installer\SHA256SUMS.txt -Encoding ascii
+
+      - name: Create draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' `
+            "target\installer\DeskCam-Setup-$env:VERSION.exe" target\installer\SHA256SUMS.txt `
+            --draft --title "DeskCam $env:VERSION" --notes-file .github\release-notes.md --generate-notes

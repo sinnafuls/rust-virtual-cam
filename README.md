@@ -14,48 +14,29 @@ View, browsers, or any other app that uses a camera.
 | **Windows 11** | Windows' virtual camera API (`MFCreateVirtualCamera`); shows as "DeskCam (Windows Virtual Camera)" | All camera apps |
 | **Windows 10** (1903 or newer, 64-bit) | A DirectShow capture filter (the same method OBS Virtual Camera uses) | Discord, OBS, Chrome, Edge, Firefox, Zoom, Teams and other DirectShow apps. **Not** the built-in Windows Camera app or other Media Foundation-only apps |
 
-> **Windows 10 support is new and not yet tested on real hardware.** See [docs/WIN10_PLAN.md](docs/WIN10_PLAN.md).
-
-## Requirements
-
-- Windows 11, or 64-bit Windows 10 version 1903 or newer
-- [Rust](https://rustup.rs/), stable, with the default `x86_64-pc-windows-msvc` toolchain
-- [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the
-  **"Desktop development with C++"** workload (for the MSVC linker and Windows SDK)
+> Windows 10 support is new: it passes automated tests on Windows 10 (browsers, 64- and 32-bit apps),
+> but hasn't been tried in Discord, OBS or Zoom on Windows 10 yet. See [docs/WIN10_PLAN.md](docs/WIN10_PLAN.md).
 
 ## Install
 
-1. Build it:
-
-   ```powershell
-   git clone https://github.com/sinnafuls/rust-virtual-cam.git
-   cd rust-virtual-cam
-   cargo build --release
-   ```
-
-   **Windows 10 only:** also build the 32-bit camera filter, so 32-bit apps can see the camera too:
-
-   ```powershell
-   rustup target add i686-pc-windows-msvc
-   cargo build --release --target i686-pc-windows-msvc -p deskcam-dshow
-   ```
-
-2. Open **PowerShell as Administrator** in the same folder and run the installer:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-   ```
-
-   The installer does the following:
-   - copies the program to `C:\Program Files\DeskCam`;
-   - registers the camera with Windows (this step needs administrator rights). On Windows 10 it registers the DirectShow filter, 64-bit and 32-bit;
-   - creates the settings folder `C:\ProgramData\DeskCam`;
-   - makes DeskCam start automatically when you log in;
-   - starts DeskCam right away. The tray icon may be hidden behind the `^` arrow on the taskbar.
-
-3. Open Discord (or OBS, your browser, and so on) and select **DeskCam (Windows Virtual Camera)** (Windows 11) or **DeskCam** (Windows 10) as your camera. On Windows 10, restart any app that was already open:
+1. Download **`DeskCam-Setup-x.y.z.exe`** from the [latest release](https://github.com/sinnafuls/rust-virtual-cam/releases/latest).
+2. Run it and accept the administrator prompt (registering a camera with Windows needs admin rights).
+   - Windows may show **"Windows protected your PC"**, because the installer isn't code-signed.
+     Click **More info → Run anyway**.
+   - Choose whether DeskCam should **start automatically when you sign in** (recommended) and whether
+     to add a **desktop shortcut**.
+3. Leave **Start DeskCam now** ticked on the last page. DeskCam runs in the tray; the icon may be
+   hidden behind the `^` arrow on the taskbar.
+4. Open Discord (or OBS, your browser, and so on) and pick the camera:
+   **DeskCam (Windows Virtual Camera)** on Windows 11, **DeskCam** on Windows 10.
+   On Windows 10, restart apps that were already open.
    - **Discord:** Settings → Voice & Video → Camera
    - **OBS:** Sources → + → Video Capture Device → DeskCam
+
+The installer detects your Windows version and installs the right camera for it: the Windows 11 virtual
+camera, or on Windows 10 the DirectShow camera for both 64-bit and 32-bit apps.
+
+Requirements: Windows 11, or 64-bit Windows 10 version 1903 or newer.
 
 ## Settings
 
@@ -92,17 +73,13 @@ From a terminal, `deskcam.exe stop` closes a running instance.
 
 ## Updating
 
-Pull the latest code, run `cargo build --release`, then run `scripts\install.ps1` as Administrator again.
+Download the newer installer and run it. It closes DeskCam (and, on Windows 10, asks to close apps that
+are using the camera), updates it and keeps your settings.
 
 ## Uninstall
 
-In an Administrator PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1
-```
-
-This removes the program, the camera registration and the autostart entry. Your `config.ini` is kept.
+**Settings → Apps → Installed apps → DeskCam → Uninstall** (or *Add or remove programs*). This removes the
+program, the camera and the autostart entry. Your `config.ini` is kept.
 
 ## Troubleshooting
 
@@ -110,11 +87,40 @@ This removes the program, the camera registration and the autostart entry. Your 
 - **The camera is black.**
   - Open the log from the tray menu. It should say `capture started` while an app is using the camera.
   - If you just changed settings, use **Restart** from the tray menu.
-- **"Access denied" error.** Always install with `scripts\install.ps1`. Don't register the DLL from the `target` folder: Windows' camera service can't read files inside your user folder.
+- **"Access denied" error.** Install with the installer (or `scripts\install.ps1` when building from source). Don't register the DLL from the `target` folder: Windows' camera service can't read files inside your user folder.
 - **Check that frames are flowing.** Run `cargo run --release --example probe`. It opens the camera like an app would and prints the resolution, measured fps and brightness, and saves a snapshot to `probe.bmp`. (Windows 11 only for now.)
 - **Windows 10: the camera doesn't show up in an app.** Restart the app after installing. The built-in Windows Camera app can't see DeskCam on Windows 10. For a 32-bit app, make sure you built and installed the 32-bit filter (see Install).
 - **Windows 10: a yellow border appears around the screen while streaming.** Windows 10 always shows it during screen capture and it can't be turned off. It is drawn on your screen, not in the video.
 - **Windows 10: install.ps1 says files are in use.** An app that used the camera still has the filter loaded. The installer works around this, but close those apps before uninstalling.
+
+## Building from source
+
+Needs [Rust](https://rustup.rs/) (stable, `x86_64-pc-windows-msvc`) and
+[Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the
+**"Desktop development with C++"** workload.
+
+```powershell
+git clone https://github.com/sinnafuls/rust-virtual-cam.git
+cd rust-virtual-cam
+cargo build --release
+# 32-bit camera filter for 32-bit apps on Windows 10:
+rustup target add i686-pc-windows-msvc
+cargo build --release --target i686-pc-windows-msvc -p deskcam-dshow
+```
+
+Then either install straight from the build in an **Administrator PowerShell**:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1     # scripts\uninstall.ps1 to remove
+```
+
+or build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
+
+```powershell
+ISCC.exe /DAppVersion=0.1.0 installer\deskcam.iss   # writes target\installer\DeskCam-Setup-0.1.0.exe
+```
+
+Releases are built by `.github/workflows/release.yml` when a `v*` tag is pushed.
 
 ## How it works
 
@@ -134,7 +140,8 @@ crates/
   deskcam-source/   Windows 11: media source DLL loaded by Windows' camera service
   deskcam-dshow/    Windows 10: DirectShow capture filter DLL loaded by camera apps
   deskcam-proto/    shared-memory layout, format conversion and helpers used by all three
-scripts/            install.ps1 / uninstall.ps1
+scripts/            install.ps1 / uninstall.ps1: install from a source build
+installer/          deskcam.iss: the Inno Setup installer published in releases
 docs/               WIN10_PLAN.md: design of the Windows 10 support
 ```
 

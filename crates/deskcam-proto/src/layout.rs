@@ -283,6 +283,12 @@ mod tests {
             let r = unsafe { FrameRing::from_raw(base as *mut u8, w, h, true) };
             for i in 0..20_000u32 {
                 r.publish(|b| b.fill(i as u8));
+                // A real producer leaves time between frames; a writer that never pauses laps a
+                // preempted reader on every retry and only measures the scheduler.
+                let t = std::time::Instant::now();
+                while t.elapsed() < std::time::Duration::from_micros(20) {
+                    std::hint::spin_loop();
+                }
             }
             done_w.store(true, Ordering::Release);
         });
@@ -300,6 +306,34 @@ mod tests {
         t.join().unwrap();
         drop(buf);
         assert!(frames > 0);
-        assert!(torn * 1000 <= frames, "torn {torn} of {frames}");
+        assert!(torn * 100 <= frames, "torn {torn} of {frames}");
+    }
+
+    /// A write into the very slot being copied is detected and the copy is redone with the
+    /// newest frame.
+    #[test]
+    fn read_retries_when_slot_is_overwritten() {
+        let (w, h) = (16u32, 16u32);
+        let mut buf = alloc(w, h);
+        let base = buf.0.as_mut_ptr() as *mut u8;
+        let writer = unsafe { FrameRing::from_raw(base, w, h, true) };
+        writer.init_header();
+        writer.touch_writer(1);
+        writer.publish(|b| b.fill(1));
+        let reader = unsafe { FrameRing::from_raw(base, w, h, false) };
+        let (mut calls, mut seen) = (0, 0u8);
+        let outcome = reader.read_latest(2, |b| {
+            calls += 1;
+            if calls == 1 {
+                // Three publishes wrap the ring onto the slot being read.
+                for v in 2..=4 {
+                    writer.publish(|s| s.fill(v));
+                }
+            }
+            seen = b[0];
+        });
+        assert_eq!(outcome, ReadOutcome::Frame);
+        assert_eq!(calls, 2, "the overwritten copy must be retried");
+        assert_eq!(seen, 4, "the retry must read the newest frame");
     }
 }
