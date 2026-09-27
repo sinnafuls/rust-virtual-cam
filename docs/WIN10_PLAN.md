@@ -13,7 +13,7 @@ design sections below were written first; see *Implementation status* for how th
 | 2a. `deskcam-dshow` filter (NV12) | Done | `crates/deskcam-dshow`: `filter.rs`, `pin.rs`, `enums.rs`, `stream.rs`, `format.rs`, `lib.rs` (DLL exports, registration) |
 | 2b. I420 / YUY2, x86 build, resize handling, flush on Stop | Done | `deskcam-proto/src/convert.rs` (+ unit tests), `stream.rs` (`FrameSource` reopens on size change and scales) |
 | 3. Installer / uninstaller | Done | `scripts/install.ps1` (`-Backend auto\|mf\|dshow`, x64 + x86 registration), `scripts/uninstall.ps1` |
-| 4. Tests / CI | Partly | `deskcam-dshow/tests/filter.rs` (pin/caps + a running graph into the Null Renderer), `.github/workflows/ci.yml`. **Still to do:** `probe --dshow`, and the manual app matrix on a Win10 VM |
+| 4. Tests / CI | Mostly | `deskcam-dshow/tests/filter.rs` (pin/caps, running graph, concurrent state changes, enumerator bounds), `examples/dshow_probe.rs` (x64 + x86), `.github/workflows/ci.yml`, VM results below. **Still to do:** Discord, OBS, Firefox, Zoom by hand |
 | 5. Docs | Done | README support table, install steps and troubleshooting |
 | 6. Desktop Duplication capture (no yellow border) | Not started | Optional |
 
@@ -71,13 +71,33 @@ App process (Discord, Chrome, OBS, ...)                 install.ps1 registered, 
   registered camera always agree.
 - `config.ini` saved with a UTF-8 BOM (older Notepad) parses.
 
+### Windows 10 VM results
+
+Windows 10 IoT Enterprise LTSC 2021 (build 19044), Hyper-V, no GPU. Consumers ran in the user's
+desktop session (the frame section is session-local).
+
+| Check | Result |
+|---|---|
+| `install.ps1` on Win10 | DirectShow backend chosen; "DeskCam" registered for x64 and x86; `backend = auto` in `config.ini` |
+| ffmpeg (x64) | Listed with NV12 / I420 / YUY2 at 1920×1080; 90 frames at 30 fps, correct desktop |
+| `dshow_probe` x64, each format | NV12, I420, YUY2: 30.0 fps, correct picture/colours |
+| `dshow_probe` x86 | 30.0 fps, correct picture |
+| Edge 154 (`getUserMedia`) | Listed, 1280×720 (Edge scales), 30.3 fps, correct picture |
+| Two apps at once (x64 + x86) | Both 30 fps; capture stops after both close |
+| DeskCam not running | Listed; black frames at 30 fps; no hang |
+| App opens the camera before DeskCam starts | Black, then live once DeskCam starts |
+| Reinstall while an app holds the filter | Old DLL renamed, install succeeds; leftover deleted on the next install once released |
+| Uninstall / reinstall | Registrations removed from both views, autostart removed, config kept; reinstall works |
+| CPU, no GPU | `deskcam.exe` ~1.3 cores (D3D runs on WARP in a GPU-less VM); consumer 0.6 % of a core |
+
+`MinUpdateInterval` is unavailable on Windows 10 (logged); the worker's own rate cap keeps capture at
+the configured fps.
+
 ### Next steps
 
 1. Run CI on the branch and fix anything Windows-specific that `cargo check` could not catch.
-2. Test on a Windows 10 22H2 VM using the manual matrix in Phase 4. Needs build 18362 (1903) or
-   newer: a 1803 image cannot run DeskCam.
-3. `probe --dshow`: enumerate the device like an app does and save a snapshot.
-4. Optional: a placeholder image while `deskcam.exe` isn't running, and Desktop Duplication capture.
+2. Manual checks in Discord, OBS (all formats), Firefox and Zoom on Windows 10.
+3. Optional: a placeholder image while `deskcam.exe` isn't running, and Desktop Duplication capture.
 
 ## 1. The problem
 
