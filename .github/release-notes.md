@@ -8,6 +8,14 @@ Desktop Duplication capture avoids the yellow capture border on Windows 10.
 **The Windows 11 native virtual-camera path and default capture method are unchanged.**
 Upgrade existing Windows 10 installations with this installer, then fully quit and reopen camera apps.
 
+## Also included
+
+- Late or rejoining camera consumers receive the cached desktop frame without waiting for another
+  desktop update.
+- Bundled 64-bit and 32-bit diagnostics, with a **DeskCam Diagnostics** Start-menu shortcut and guided
+  bug reporting.
+- Updated Windows 10 install/uninstall handling and diagnostics for the software camera.
+
 ## Install
 
 1. Download **DeskCam-Setup-*.exe** below and run it. Accept the administrator prompt.

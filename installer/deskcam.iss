@@ -8,7 +8,7 @@
 ; Mirrors scripts/install.ps1 and scripts/uninstall.ps1.
 ;
 ; Build (after cargo release builds for x64 and i686, including -p deskcam-diagnostics):
-;   ISCC.exe /DAppVersion=0.1.0 installer\deskcam.iss
+;   ISCC.exe /DAppVersion=0.1.2 installer\deskcam.iss
 
 #ifndef AppVersion
   #define AppVersion "0.0.0-dev"

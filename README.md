@@ -230,7 +230,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1     # scripts\unins
 or build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 
 ```powershell
-ISCC.exe /DAppVersion=0.1.0 installer\deskcam.iss   # writes target\installer\DeskCam-Setup-0.1.0.exe
+ISCC.exe /DAppVersion=0.1.2 installer\deskcam.iss   # writes target\installer\DeskCam-Setup-0.1.2.exe
 ```
 
 To build the portable `DeskCam-Diagnostics.zip` (64-bit tool plus its `x86` helper) on its own:

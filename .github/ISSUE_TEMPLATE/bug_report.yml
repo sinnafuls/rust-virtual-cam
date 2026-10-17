@@ -30,7 +30,7 @@ body:
     attributes:
       label: DeskCam version
       description: Settings → Apps → Installed apps → DeskCam, or the "DeskCam x.y.z starting" line in the log (tray menu → Open log).
-      placeholder: "0.1.1"
+      placeholder: "0.1.2"
     validations:
       required: true
 
