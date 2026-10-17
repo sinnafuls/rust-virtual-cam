@@ -3,29 +3,37 @@
 //! The Windows Camera Frame Server (LocalService, session 0) loads this DLL through the
 //! HKLM-registered CLSID and pulls NV12/RGB32 samples from it. Frames come from the app via
 //! the shared section described in `deskcam_proto::layout`.
+//!
+//! Windows 11 adds the camera at runtime with `MFCreateVirtualCamera`. On Windows 10 registering
+//! this DLL also installs a software camera device that points the Frame Server at it
+//! (`swdevice`), so Media Foundation and WinRT apps can use DeskCam there too.
 
 pub mod activator;
 mod attrs;
 pub mod media_source;
 pub mod media_stream;
+mod swdevice;
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
-use deskcam_proto::{CLSID, CLSID_STR, paths, stream_info};
+use deskcam_proto::{CLSID, CLSID_STR, os, paths, stream_info};
 use windows::Win32::Foundation::{
-    CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_POINTER, ERROR_FILE_NOT_FOUND, HINSTANCE, HMODULE,
-    S_FALSE, S_OK,
+    CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_INVALIDARG, E_POINTER, ERROR_FILE_NOT_FOUND, HINSTANCE,
+    HMODULE, S_FALSE, S_OK,
 };
 use windows::Win32::System::Com::{IClassFactory, IClassFactory_Impl};
 use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
 use windows::Win32::System::LibraryLoader::{DisableThreadLibraryCalls, GetModuleFileNameW};
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_LOCAL_MACHINE, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey, RegCreateKeyExW,
-    RegDeleteTreeW, RegSetValueExW,
+    HKEY, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey, RegCreateKeyExW,
+    RegDeleteTreeW, RegOpenKeyExW, RegSetValueExW,
 };
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows_core::{BOOL, GUID, HRESULT, HSTRING, IUnknown, Interface, PCWSTR, Ref, implement};
+
+/// Camera name of the Windows 10 device when `regsvr32` gets no `/i:"name"`.
+pub const DEFAULT_NAME: &str = "DeskCam";
 
 static MODULE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static OBJECTS: AtomicUsize = AtomicUsize::new(0);
@@ -129,8 +137,7 @@ fn set_string(key: HKEY, name: PCWSTR, value: &str) -> windows_core::Result<()> 
 }
 
 /// Registers the class under HKLM; the Frame Server does not read per-user registrations.
-#[unsafe(no_mangle)]
-extern "system" fn DllRegisterServer() -> HRESULT {
+fn register_class() -> windows_core::Result<()> {
     let path = module_path();
     let subkey = HSTRING::from(format!("{}\\InprocServer32", clsid_key()));
     let mut key = HKEY::default();
@@ -154,14 +161,83 @@ extern "system" fn DllRegisterServer() -> HRESULT {
             r
         })
     };
+    result
+}
+
+/// Whether the class key exists; unreadable counts as existing so rollback never deletes it.
+fn class_exists() -> bool {
+    let mut key = HKEY::default();
+    let status = unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, &HSTRING::from(clsid_key()), None, KEY_READ, &mut key) };
+    if status.is_ok() {
+        unsafe {
+            let _ = RegCloseKey(key);
+        }
+    }
+    status != ERROR_FILE_NOT_FOUND
+}
+
+fn delete_class() -> windows_core::Result<()> {
+    let status = unsafe { RegDeleteTreeW(HKEY_LOCAL_MACHINE, &HSTRING::from(clsid_key())) };
+    if status.is_ok() || status == ERROR_FILE_NOT_FOUND { Ok(()) } else { Err(status.to_hresult().into()) }
+}
+
+fn register(name: &str) -> windows_core::Result<()> {
+    if os::has_mf_virtual_camera() {
+        register_class()?;
+        // Windows 11 adds the camera at runtime; a device left from Windows 10 would list it twice.
+        return swdevice::remove();
+    }
+    // A failed first install leaves no class registration behind; an existing one (a previous
+    // install being renamed or updated) is kept, as is its still-installed device.
+    let existed = class_exists();
+    let result = register_class().and_then(|()| swdevice::install(name));
+    if result.is_err()
+        && !existed
+        && let Err(e) = delete_class()
+    {
+        trace(&format!("rolling back the class registration failed: {e}"));
+    }
+    result
+}
+
+fn unregister() -> windows_core::Result<()> {
+    swdevice::remove()?;
+    delete_class()
+}
+
+fn to_hresult(result: windows_core::Result<()>) -> HRESULT {
     match result {
         Ok(()) => S_OK,
-        Err(e) => e.code(),
+        Err(e) => {
+            trace(&format!("registration failed: {e}"));
+            e.code()
+        }
     }
+}
+
+/// `regsvr32 deskcam_source.dll`; on Windows 10 the camera is named [`DEFAULT_NAME`].
+#[unsafe(no_mangle)]
+extern "system" fn DllRegisterServer() -> HRESULT {
+    to_hresult(register(DEFAULT_NAME))
 }
 
 #[unsafe(no_mangle)]
 extern "system" fn DllUnregisterServer() -> HRESULT {
-    let status = unsafe { RegDeleteTreeW(HKEY_LOCAL_MACHINE, &HSTRING::from(clsid_key())) };
-    if status.is_ok() || status == ERROR_FILE_NOT_FOUND { S_OK } else { status.to_hresult() }
+    to_hresult(unregister())
+}
+
+/// `regsvr32 /n /i:"Camera name" deskcam_source.dll` names the Windows 10 camera; `/u /n /i`
+/// unregisters. Windows 11 takes the name from the app at runtime.
+#[unsafe(no_mangle)]
+unsafe extern "system" fn DllInstall(install: BOOL, cmdline: PCWSTR) -> HRESULT {
+    if !install.as_bool() {
+        return to_hresult(unregister());
+    }
+    let name = if cmdline.is_null() { String::new() } else { unsafe { cmdline.to_string() }.unwrap_or_default() };
+    let name = match name.trim().trim_matches('"').trim() {
+        "" => DEFAULT_NAME,
+        n if n.chars().count() <= 64 => n,
+        _ => return E_INVALIDARG,
+    };
+    to_hresult(register(name))
 }

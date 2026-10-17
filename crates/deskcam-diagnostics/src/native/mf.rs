@@ -5,9 +5,9 @@
 //! diagnostics executable starts even on Windows N editions without the Media Feature Pack.
 //! `MFCreateVirtualCamera` is only looked up, never called: no camera is created or registered.
 //!
-//! On Windows 10 DeskCam is a DirectShow filter, so its absence here is expected.
-//! On Windows 11 a matching friendly name is only a candidate: MF does not expose the source
-//! CLSID to apps. Enumerate without activating any MF camera; a name match cannot prove identity.
+//! Windows 10 exposes a driverless Frame Server camera alongside its DirectShow filter.
+//! Both platforms should enumerate a matching MF camera unless Windows 11 is forced to DirectShow.
+//! Enumerate without activating a camera: a friendly-name match alone cannot prove identity.
 
 use deskcam_proto::{CLSID_STR, os, paths};
 use std::ffi::c_void;
@@ -128,7 +128,7 @@ fn virtual_camera_api(r: &mut Report, win11: bool) {
         Ok(_) if win11 => r.pass("mfsensorgroup.dll exports MFCreateVirtualCamera (looked up only; no camera created)"),
         Ok(_) => r.info("mfsensorgroup.dll exports MFCreateVirtualCamera although the build is below 22000"),
         Err(why) if win11 => r.fail(format!("MFCreateVirtualCamera unavailable on Windows 11: {why}; the MF backend cannot create the camera")),
-        Err(why) => r.info(format!("MFCreateVirtualCamera absent, as expected before Windows 11 ({why}); DeskCam uses DirectShow here")),
+        Err(why) => r.info(format!("MFCreateVirtualCamera absent, as expected before Windows 11 ({why}); DeskCam registers a driverless Frame Server camera and DirectShow filters instead")),
     }
 }
 
@@ -147,21 +147,20 @@ fn configured_camera(r: &mut Report) -> (String, bool) {
         Ok(bytes) if bytes.len() <= 16 * 1024 => bytes,
         Ok(_) => {
             r.warn("config.ini exceeds 16 KiB; cannot infer the MF camera name/backend");
-            return ("DeskCam".into(), os::has_mf_virtual_camera());
+            return ("DeskCam".into(), true);
         }
         Err(e) => {
             r.info(format!(
                 "{} not readable ({e}); assuming default name/backend",
                 path.display()
             ));
-            return ("DeskCam".into(), os::has_mf_virtual_camera());
+            return ("DeskCam".into(), true);
         }
     };
     let text = String::from_utf8_lossy(&bytes);
     let (backend, name) = crate::inventory::camera_keys(&text);
-    let expects_mf = os::has_mf_virtual_camera()
-        && !backend
-            .is_some_and(|b| matches!(b.to_ascii_lowercase().as_str(), "dshow" | "directshow"));
+    let expects_mf = !os::has_mf_virtual_camera()
+        || !backend.is_some_and(|b| matches!(b.to_ascii_lowercase().as_str(), "dshow" | "directshow"));
     (name.unwrap_or_else(|| "DeskCam".into()), expects_mf)
 }
 
@@ -243,15 +242,16 @@ fn enumerate(r: &mut Report, win11: bool, create_attributes: CreateAttributesFn)
     ));
 
     match found {
-        Some(friendly) => {
-            if win11 {
-                r.info(format!("MF lists a camera matching DeskCam's configured name: '{friendly}' (name match only)"));
-            } else {
-                r.warn(format!("A Media Foundation camera named '{friendly}' exists on Windows 10, where DeskCam is DirectShow-only"));
-            }
-        }
+        Some(friendly) => r.info(format!(
+            "MF lists a camera matching DeskCam's configured name: '{friendly}' (name match only)"
+        )),
         None if expects_mf => r.fail(format!(
-            "No MF camera matching '{name}': leave deskcam.exe running with the MF backend and check its log for startup errors"
+            "No MF camera matching '{name}': {}",
+            if win11 {
+                "leave deskcam.exe running with the MF backend and check its log for startup errors"
+            } else {
+                "reinstall DeskCam to register its software camera and deskcam_source.dll; check the Frame Server service"
+            }
         )),
         None => r.info(
             "No matching MF camera: expected for the DirectShow backend; MF-only apps cannot discover that filter",

@@ -2,7 +2,8 @@
 ;
 ; Installs the right camera for the running Windows:
 ;   Windows 11 (build 22000+): the Media Foundation virtual camera source (deskcam_source.dll)
-;   Windows 10 (build 18362+): the DirectShow capture filter, 64-bit and 32-bit (deskcam_dshow.dll)
+;   Windows 10 (build 18362+): 64-/32-bit DirectShow filters plus a driverless software camera
+;     backed by deskcam_source.dll for Media Foundation and WinRT apps
 ; plus the diagnostics tool on every Windows: deskcam-diagnostics.exe and its 32-bit helper in x86\.
 ; Mirrors scripts/install.ps1 and scripts/uninstall.ps1.
 ;
@@ -61,7 +62,7 @@ Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Files]
 Source: "{#BuildDir}\deskcam.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
-Source: "{#BuildDir}\deskcam_source.dll"; DestDir: "{app}"; Check: IsWin11; Flags: ignoreversion restartreplace uninsrestartdelete
+Source: "{#BuildDir}\deskcam_source.dll"; DestDir: "{app}"; Flags: ignoreversion restartreplace uninsrestartdelete
 Source: "{#BuildDir}\deskcam_dshow.dll"; DestDir: "{app}"; Check: not IsWin11; Flags: ignoreversion restartreplace uninsrestartdelete
 Source: "{#BuildDir32}\deskcam_dshow.dll"; DestDir: "{app}\x86"; Check: not IsWin11; Flags: ignoreversion restartreplace uninsrestartdelete
 ; Diagnostics on every Windows; the x86 helper checks the 32-bit camera view.
@@ -87,6 +88,7 @@ Name: "{autoprograms}\DeskCam Diagnostics"; Filename: "{app}\deskcam-diagnostics
 ; and LPAC consumers read them.
 Filename: "{sys}\icacls.exe"; Parameters: """{commonappdata}\DeskCam"" /grant *S-1-5-32-545:(OI)(CI)M *S-1-5-19:(OI)(CI)RX *S-1-15-2-1:(OI)(CI)RX *S-1-15-2-2:(OI)(CI)RX"; Flags: runhidden; StatusMsg: "Setting folder permissions..."
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\deskcam_source.dll"""; Check: IsWin11; Flags: runhidden; StatusMsg: "Registering the camera..."
+Filename: "{sys}\regsvr32.exe"; Parameters: "/s /n /i:""{code:CameraName}"" ""{app}\deskcam_source.dll"""; Check: not IsWin11; Flags: runhidden; StatusMsg: "Registering the Media Foundation and WinRT camera..."
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s /n /i:""{code:CameraName}"" ""{app}\deskcam_dshow.dll"""; Check: not IsWin11; Flags: runhidden; StatusMsg: "Registering the camera..."
 Filename: "{syswow64}\regsvr32.exe"; Parameters: "/s /n /i:""{code:CameraName}"" ""{app}\x86\deskcam_dshow.dll"""; Check: not IsWin11; Flags: runhidden 32bit; StatusMsg: "Registering the camera for 32-bit apps..."
 ; Autostart goes into the signed-in user's own registry, not the elevated account's.
@@ -176,12 +178,10 @@ begin
       RunHidden(ExpandConstant('{sys}\regsvr32.exe'), '/u /s "' + App + '\deskcam_dshow.dll"');
     if FileExists(App + '\x86\deskcam_dshow.dll') then
       RunHidden(ExpandConstant('{syswow64}\regsvr32.exe'), '/u /s "' + App + '\x86\deskcam_dshow.dll"');
-    { The camera services keep the old media source loaded; they restart on demand. }
-    RunHidden(ExpandConstant('{sys}\net.exe'), 'stop FrameServerMonitor /y');
-    RunHidden(ExpandConstant('{sys}\net.exe'), 'stop FrameServer /y');
-  end
-  else if FileExists(App + '\deskcam_source.dll') then
-    RunHidden(ExpandConstant('{sys}\regsvr32.exe'), '/u /s "' + App + '\deskcam_source.dll"');
+  end;
+  { Both platforms load the media source in the camera services; they restart on demand. }
+  RunHidden(ExpandConstant('{sys}\net.exe'), 'stop FrameServerMonitor /y');
+  RunHidden(ExpandConstant('{sys}\net.exe'), 'stop FrameServer /y');
 end;
 
 { The installer always registers the camera for this Windows version, so the app must pick it too:

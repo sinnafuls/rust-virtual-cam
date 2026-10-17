@@ -1,9 +1,9 @@
 //! Layout of the shared frame section and its lock-free seqlock ring.
 //!
-//! On Windows 11 the section is created by the media source inside the Frame Server (session 0,
-//! where creating `Global\` objects needs no privilege) and opened by the app for writing. On
-//! Windows 10 the app creates a `Local\` section itself and the DirectShow filter, loaded inside
-//! each consumer process of the same session, opens it.
+//! The media source inside the Frame Server creates the `Global\` section on both platforms
+//! (session 0, where global object creation needs no extra privilege); the app opens it for writing.
+//! Windows 10 also has a `Local\` section created by the app and read by the DirectShow filters
+//! loaded inside consumers in the same desktop session. One capture feeds all active sections.
 //! Every header field may be written by any Authenticated User, so readers bound-check
 //! everything and never trust sizes from the header.
 
@@ -31,7 +31,7 @@ const OFF_SEQ: usize = 64;
 /// Kernel object namespace of the frame section.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Namespace {
-    /// Windows 11: created by the media source inside the Frame Server (session 0).
+    /// Created by the media source inside the Frame Server (session 0), on Windows 10 and 11.
     Global,
     /// Windows 10: created by the app in the user's session, where DirectShow consumers run.
     Local,

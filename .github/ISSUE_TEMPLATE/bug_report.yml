@@ -10,6 +10,10 @@ body:
         follow [Debugging and reporting problems](https://github.com/sinnafuls/rust-virtual-cam#debugging-and-reporting-problems)
         to create one (Start menu → **DeskCam Diagnostics**, or [DeskCam-Diagnostics.zip](https://github.com/sinnafuls/rust-virtual-cam/releases/latest/download/DeskCam-Diagnostics.zip) for older installs).
 
+        **Windows compatibility:** Windows 10 (64-bit, version 1903 or newer) and Windows 11 are supported.
+        If you upgraded from an older Windows 10 DeskCam build, rerun the current installer to add the
+        software camera for AMD Privacy View and other Media Foundation/WinRT apps, then reopen those apps.
+
         **This issue will be public.** If the diagnostics tool won't run, report the problem anyway and describe what happened below.
 
   - type: textarea

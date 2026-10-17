@@ -34,8 +34,8 @@ jobs:
       - name: Test
         # deskcam-source needs the Frame Server, which Server runners lack.
         run: |
-          cargo test --release --locked -p deskcam-proto -p deskcam -p deskcam-dshow
-          cargo test --release --locked --target i686-pc-windows-msvc -p deskcam-dshow
+          cargo test --release --locked -p deskcam-proto -p deskcam -p deskcam-dshow -p deskcam-diagnostics
+          cargo test --release --locked --target i686-pc-windows-msvc -p deskcam-dshow -p deskcam-diagnostics
 
       - name: Build portable diagnostics
         shell: pwsh

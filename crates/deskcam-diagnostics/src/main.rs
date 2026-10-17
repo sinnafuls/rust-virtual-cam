@@ -158,7 +158,7 @@ fn collect(requested: Option<PathBuf>) -> io::Result<PathBuf> {
     )?;
     writeln!(
         file,
-        "Windows 10 requires DirectShow registration; MF-only apps cannot discover that backend."
+        "Windows 10 installs DirectShow filters plus a driverless Frame Server camera for Media Foundation and WinRT apps."
     )?;
     writeln!(
         file,
@@ -241,7 +241,7 @@ fn collect(requested: Option<PathBuf>) -> io::Result<PathBuf> {
     )?;
     writeln!(
         file,
-        "A missing MF camera on Windows 10 is expected; compare native and 32-bit DirectShow results. Absent privacy keys are not proof of denial."
+        "A missing MF camera on Windows 10 indicates a missing or unavailable software-camera registration; compare DirectShow results too. Absent privacy keys are not proof of denial."
     )?;
     writeln!(
         file,

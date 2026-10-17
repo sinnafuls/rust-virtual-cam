@@ -7,6 +7,7 @@
 mod backend;
 mod capture;
 mod config;
+mod duplication;
 mod log;
 mod monitor;
 mod tray;

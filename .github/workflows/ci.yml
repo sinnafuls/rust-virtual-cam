@@ -31,7 +31,7 @@ jobs:
         shell: pwsh
         run: |
           $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
-          foreach ($dll in 'target\release\deskcam_dshow.dll', 'target\i686-pc-windows-msvc\release\deskcam_dshow.dll') {
+          foreach ($dll in 'target\release\deskcam_source.dll', 'target\release\deskcam_dshow.dll', 'target\i686-pc-windows-msvc\release\deskcam_dshow.dll') {
             $exports = & $dumpbin /exports $dll | Out-String
             foreach ($name in 'DllGetClassObject', 'DllCanUnloadNow', 'DllRegisterServer', 'DllUnregisterServer', 'DllInstall') {
               if ($exports -notmatch "\s$name(\s|$)") { throw "$dll does not export $name undecorated" }
@@ -64,10 +64,10 @@ jobs:
 
       - name: Test
         # deskcam-source needs the Frame Server and Media Foundation, which Server runners lack.
-        run: cargo test --release --locked -p deskcam-proto -p deskcam -p deskcam-dshow
+        run: cargo test --release --locked -p deskcam-proto -p deskcam -p deskcam-dshow -p deskcam-diagnostics
 
-      - name: Test 32-bit DirectShow filter
-        run: cargo test --release --locked --target i686-pc-windows-msvc -p deskcam-dshow
+      - name: Test 32-bit DirectShow filter and diagnostics
+        run: cargo test --release --locked --target i686-pc-windows-msvc -p deskcam-dshow -p deskcam-diagnostics
 
       - name: Register the DirectShow filter and find it as a camera
         shell: pwsh

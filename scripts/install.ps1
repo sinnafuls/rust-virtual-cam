@@ -3,9 +3,9 @@
 # C:\ProgramData\DeskCam, adds logon autostart and starts the app unelevated. Also installs
 # deskcam-diagnostics.exe (and its 32-bit helper in x86\) to collect a troubleshooting report.
 #
-# Windows 11 registers the Media Foundation source (deskcam_source.dll). Windows 10 has no
-# virtual camera API, so it registers the DirectShow capture filter (deskcam_dshow.dll) instead,
-# in both its 64-bit and 32-bit builds because apps load it in-process.
+# Windows 11 registers the Media Foundation source (deskcam_source.dll). Windows 10 registers
+# both the 64-/32-bit DirectShow filters and the media source; source registration creates a
+# driverless software camera device for Media Foundation and WinRT consumers.
 # -Backend dshow forces the DirectShow filter on Windows 11 too (to test it).
 param(
     [string]$BuildDir = "$PSScriptRoot\..\target\release",
@@ -22,8 +22,11 @@ if ($OsBuild -lt 18362) { throw "DeskCam needs Windows 10 version 1903 (build 18
 if (-not [Environment]::Is64BitOperatingSystem) { throw "DeskCam needs 64-bit Windows." }
 if ($Backend -eq 'mf' -and $OsBuild -lt 22000) { throw "-Backend mf needs Windows 11; this is build $OsBuild." }
 $UseDShow = $Backend -eq 'dshow' -or ($Backend -eq 'auto' -and $OsBuild -lt 22000)
+$UseSource = -not $UseDShow -or $OsBuild -lt 22000
 
-$Required = @('deskcam.exe', 'deskcam-diagnostics.exe', $(if ($UseDShow) { 'deskcam_dshow.dll' } else { 'deskcam_source.dll' }))
+$Required = @('deskcam.exe', 'deskcam-diagnostics.exe')
+if ($UseDShow) { $Required += 'deskcam_dshow.dll' }
+if ($UseSource) { $Required += 'deskcam_source.dll' }
 foreach ($file in $Required) {
     if (-not (Test-Path "$BuildDir\$file")) { throw "$BuildDir\$file not found. Run 'cargo build --release' first." }
 }
@@ -69,7 +72,7 @@ if (Test-Path "$Inst\deskcam.exe") {
 }
 Stop-Process -Name deskcam -Force -ErrorAction SilentlyContinue
 
-if (-not $UseDShow) {
+if ($UseSource) {
     # Unload any previously registered media source; both services restart on demand.
     Stop-Service FrameServerMonitor, FrameServer -Force -ErrorAction SilentlyContinue
 }
@@ -103,8 +106,11 @@ if (Test-Path $Config) {
 }
 
 if ($UseDShow) {
-    # Drop a Windows 11 registration so apps don't list the camera twice.
-    if (Test-Path "$Inst\deskcam_source.dll") {
+    if ($UseSource) {
+        Install-File "$BuildDir\deskcam_source.dll" $Inst
+        Invoke-Regsvr "$env:WINDIR\System32\regsvr32.exe" @('/s', '/n', "/i:`"$Name`"", "`"$Inst\deskcam_source.dll`"")
+    } elseif (Test-Path "$Inst\deskcam_source.dll") {
+        # A forced Windows 11 DirectShow installation does not use the media source.
         Invoke-Regsvr "$env:WINDIR\System32\regsvr32.exe" @('/u', '/s', "`"$Inst\deskcam_source.dll`"")
     }
     Install-File "$BuildDir\deskcam_dshow.dll" $Inst
@@ -114,6 +120,7 @@ if ($UseDShow) {
         Invoke-Regsvr "$env:WINDIR\SysWOW64\regsvr32.exe" @('/s', '/n', "/i:`"$Name`"", "`"$Inst\x86\deskcam_dshow.dll`"")
     }
     $Mode = "DirectShow camera '$Name' (restart apps that were open to see it)"
+    if ($UseSource) { $Mode += " and Media Foundation/WinRT camera '$Name'" }
 } else {
     foreach ($dll in "$Inst\deskcam_dshow.dll", "$Inst\x86\deskcam_dshow.dll") {
         if (Test-Path $dll) {

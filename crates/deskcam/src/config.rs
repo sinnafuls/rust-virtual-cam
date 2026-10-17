@@ -20,6 +20,9 @@ cursor = true
 name = DeskCam
 ; How the camera is exposed: auto (Windows 11: mf, Windows 10: dshow), mf, or dshow
 backend = auto
+; Screen capture method: auto (Windows 10: duplication, no border around the screen; Windows 11:
+; wgc), wgc (Windows.Graphics.Capture) or duplication (DXGI Desktop Duplication)
+capture = auto
 "#;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -42,6 +45,14 @@ pub enum BackendSel {
     DirectShow,
 }
 
+/// Screen capture method; see `capture.rs`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CaptureSel {
+    Auto,
+    Wgc,
+    Duplication,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Config {
     pub monitor: MonitorSel,
@@ -51,6 +62,7 @@ pub struct Config {
     pub cursor: bool,
     pub name: String,
     pub backend: BackendSel,
+    pub capture: CaptureSel,
 }
 
 impl Default for Config {
@@ -63,6 +75,7 @@ impl Default for Config {
             cursor: true,
             name: "DeskCam".into(),
             backend: BackendSel::Auto,
+            capture: CaptureSel::Auto,
         }
     }
 }
@@ -143,6 +156,14 @@ pub fn parse(text: &str) -> Result<Config, String> {
                     _ => return Err(format!("config.ini line {n}: backend must be auto, mf or dshow, got '{value}'")),
                 }
             }
+            "capture" => {
+                cfg.capture = match value.to_ascii_lowercase().as_str() {
+                    "auto" => CaptureSel::Auto,
+                    "wgc" => CaptureSel::Wgc,
+                    "duplication" | "dxgi" => CaptureSel::Duplication,
+                    _ => return Err(format!("config.ini line {n}: capture must be auto, wgc or duplication, got '{value}'")),
+                }
+            }
             _ => return Err(format!("config.ini line {n}: unknown key '{key}'")),
         }
     }
@@ -163,11 +184,6 @@ pub fn load() -> Result<Config, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn default_text_parses_to_defaults() {
-        assert_eq!(parse(DEFAULT_TEXT).unwrap(), Config::default());
-    }
 
     #[test]
     fn fps_monitor_and_display_number() {

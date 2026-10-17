@@ -688,14 +688,14 @@ const DISCORD: [&str; 4] = [
 ];
 
 impl Facts {
-    /// Windows 10 can only use the DirectShow filter; Windows 11 uses it when forced in config.ini.
+    /// Windows 10 uses DirectShow alongside its Frame Server camera; Windows 11 can force it.
     fn dshow_expected(&self) -> bool {
         self.build < os::WIN11_BUILD
             || matches!(self.backend.as_deref(), Some("dshow" | "directshow"))
     }
 
     fn mf_expected(&self) -> bool {
-        !self.dshow_expected()
+        self.build < os::WIN11_BUILD || !self.dshow_expected()
     }
 
     fn running<'a>(&'a self, names: &'a [&str]) -> impl Iterator<Item = &'a Proc> + 'a {
@@ -973,7 +973,7 @@ fn os_section(f: &mut Facts) {
         );
     } else if build < os::WIN11_BUILD {
         pass!(
-            "Windows 10 build {build} (>= {}): supported. MFCreateVirtualCamera needs build {}+, so DeskCam must use the DirectShow backend (backend = auto or dshow)",
+            "Windows 10 build {build} (>= {}): supported. MFCreateVirtualCamera needs build {}+; backend = auto or dshow feeds DirectShow and the installed Frame Server software camera",
             os::MIN_BUILD,
             os::WIN11_BUILD
         );
@@ -1443,7 +1443,9 @@ fn shared_data_section(f: &mut Facts) {
         }
     }
     let build = f.build;
-    let resolved = if f.dshow_expected() {
+    let resolved = if build < os::WIN11_BUILD {
+        "DirectShow plus a Frame Server software camera"
+    } else if f.dshow_expected() {
         "DirectShow"
     } else {
         "Media Foundation"
@@ -1460,7 +1462,9 @@ fn shared_data_section(f: &mut Facts) {
         Some(b @ ("dshow" | "directshow")) if build >= os::WIN11_BUILD => warn!(
             "backend = {b} forces the DirectShow filter on Windows 11: no Media Foundation camera is created, so only apps that enumerate DirectShow devices list DeskCam"
         ),
-        Some(b @ ("dshow" | "directshow")) => pass!("backend = {b}: DirectShow on build {build}"),
+        Some(b @ ("dshow" | "directshow")) => pass!(
+            "backend = {b}: DirectShow plus a Frame Server software camera on build {build}"
+        ),
         Some(b) => {
             fail!("backend = '{b}' is not auto, mf or dshow; deskcam.exe rejects this config.ini")
         }
@@ -1814,7 +1818,7 @@ fn com_section(f: &Facts) {
     );
     if present && !mf {
         info!(
-            "{label}: registered but unused here (Windows 10 has no MFCreateVirtualCamera, or backend = dshow)"
+            "{label}: registered but unused because Windows 11 is forced to backend = dshow"
         );
     }
     if f.os_64 {
@@ -2115,7 +2119,7 @@ fn mf_section(f: &Facts) {
                         dll.display()
                     ),
                     Ok(false) => info!(
-                        "{} does not export MFCreateVirtualCamera: expected on Windows 10, DeskCam uses DirectShow",
+                        "{} does not export MFCreateVirtualCamera: expected on Windows 10, DeskCam uses a driverless Frame Server camera plus DirectShow",
                         dll.display()
                     ),
                     Err(e) => fail!("{}: {e}", dll.display()),
@@ -2135,7 +2139,7 @@ fn mf_section(f: &Facts) {
             }
             Err(e) => warn!("{where_}\\EnableFrameServerMode: {}", win32(e)),
             Ok(v) if v.dword() == Some(0) => warn!(
-                "{where_}\\EnableFrameServerMode = {v}: Media Foundation capture apps of this bitness bypass the Frame Server (a known compatibility tweak); the Windows 11 virtual camera is served only through the Frame Server"
+                "{where_}\\EnableFrameServerMode = {v}: Media Foundation capture apps of this bitness bypass the Frame Server (a known compatibility tweak); DeskCam's Media Foundation camera requires the Frame Server on both Windows versions"
             ),
             Ok(v) => info!("{where_}\\EnableFrameServerMode = {v}"),
         }
@@ -2566,5 +2570,32 @@ fn cross_check_section(f: &Facts) {
     }
     if !mismatched {
         pass!("Discord and deskcam.exe share a session");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Facts;
+
+    #[test]
+    fn camera_registration_requirements_follow_platform_and_backend() {
+        for (build, backend, directshow, media_foundation) in [
+            (19045, "auto", true, true),
+            (19045, "dshow", true, true),
+            (22000, "auto", false, true),
+            (22000, "mf", false, true),
+            (22000, "dshow", true, false),
+        ] {
+            let facts = Facts {
+                build,
+                backend: Some(backend.into()),
+                ..Facts::default()
+            };
+            assert_eq!(
+                (facts.dshow_expected(), facts.mf_expected()),
+                (directshow, media_foundation),
+                "camera requirements on build {build} with backend {backend}"
+            );
+        }
     }
 }

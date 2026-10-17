@@ -1,3 +1,13 @@
+## Windows 10 camera compatibility
+
+Windows 10 now exposes a driverless software camera through Windows Camera Frame Server alongside
+the existing DirectShow filters. AMD Privacy View and other Media Foundation/WinRT apps can use
+DeskCam without a custom kernel driver, paid certificate, Test Mode or Secure Boot changes.
+Desktop Duplication capture avoids the yellow capture border on Windows 10.
+
+**The Windows 11 native virtual-camera path and default capture method are unchanged.**
+Upgrade existing Windows 10 installations with this installer, then fully quit and reopen camera apps.
+
 ## Install
 
 1. Download **DeskCam-Setup-*.exe** below and run it. Accept the administrator prompt.
@@ -6,9 +16,10 @@
 2. Pick whether DeskCam starts when you sign in and whether to add a desktop shortcut.
 3. In Discord, OBS or your browser, choose the **DeskCam** camera.
 
-Works on Windows 11 and 64-bit Windows 10 (version 1903 or newer); the installer picks the right
-camera for your Windows version. Settings: right-click the tray icon → **Open config**. For Discord,
-keep `fps = 30`.
+Supports Windows 11 and 64-bit Windows 10 version 1903 (build 18362) or newer. The installer selects
+the registrations for your Windows version. Some apps may list both Windows 10 camera paths.
+
+Settings: right-click the tray icon → **Open config**. For Discord, keep `fps = 30`.
 
 To update, run the newer installer. To remove: Settings → Apps → DeskCam → Uninstall.
 
@@ -23,6 +34,8 @@ Create a diagnostic report and [open a bug report](https://github.com/sinnafuls/
 Run it as your normal user, not as administrator, while DeskCam and the affected app are running. It
 saves a text report (the window shows where) and changes no settings. It briefly opens the camera,
 which can show Windows' yellow capture border, but saves no screenshots or video and uploads nothing.
+Passing diagnostic checks does not guarantee that every app will accept a camera. On Windows 10,
+the software camera should appear in Media Foundation enumeration as well as the DirectShow filter.
 The report contains your account name, device names, paths and log lines: review it before attaching
 it to the issue. If the tool won't run, open the issue anyway with the exact error message or a
 screenshot. Full steps: [Debugging and reporting problems](https://github.com/sinnafuls/rust-virtual-cam#debugging-and-reporting-problems).

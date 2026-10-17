@@ -1,5 +1,5 @@
 #Requires -RunAsAdministrator
-# Removes DeskCam (Windows 11 media source and/or Windows 10 DirectShow filter).
+# Removes DeskCam's media source (including its Windows 10 software camera) and DirectShow filters.
 # Keeps C:\ProgramData\DeskCam\config.ini.
 $ErrorActionPreference = 'Stop'
 
