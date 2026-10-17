@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Diagnostics and troubleshooting guide
+    url: https://github.com/sinnafuls/rust-virtual-cam#debugging-and-reporting-problems
+    about: Quick fixes and how to create a DeskCam diagnostic report to attach to a bug report.

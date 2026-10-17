@@ -1,6 +1,7 @@
 #Requires -RunAsAdministrator
 # Installs DeskCam: copies binaries to Program Files, registers the camera (HKLM), prepares
-# C:\ProgramData\DeskCam, adds logon autostart and starts the app unelevated.
+# C:\ProgramData\DeskCam, adds logon autostart and starts the app unelevated. Also installs
+# deskcam-diagnostics.exe (and its 32-bit helper in x86\) to collect a troubleshooting report.
 #
 # Windows 11 registers the Media Foundation source (deskcam_source.dll). Windows 10 has no
 # virtual camera API, so it registers the DirectShow capture filter (deskcam_dshow.dll) instead,
@@ -22,9 +23,13 @@ if (-not [Environment]::Is64BitOperatingSystem) { throw "DeskCam needs 64-bit Wi
 if ($Backend -eq 'mf' -and $OsBuild -lt 22000) { throw "-Backend mf needs Windows 11; this is build $OsBuild." }
 $UseDShow = $Backend -eq 'dshow' -or ($Backend -eq 'auto' -and $OsBuild -lt 22000)
 
-$Required = @('deskcam.exe', $(if ($UseDShow) { 'deskcam_dshow.dll' } else { 'deskcam_source.dll' }))
+$Required = @('deskcam.exe', 'deskcam-diagnostics.exe', $(if ($UseDShow) { 'deskcam_dshow.dll' } else { 'deskcam_source.dll' }))
 foreach ($file in $Required) {
     if (-not (Test-Path "$BuildDir\$file")) { throw "$BuildDir\$file not found. Run 'cargo build --release' first." }
+}
+# The diagnostics tool checks the 32-bit camera view through this helper.
+if (-not (Test-Path "$BuildDir32\deskcam-diagnostics.exe")) {
+    throw "$BuildDir32\deskcam-diagnostics.exe not found. Build it with: rustup target add i686-pc-windows-msvc; cargo build --release --target i686-pc-windows-msvc -p deskcam-diagnostics"
 }
 $Has32 = $UseDShow -and (Test-Path "$BuildDir32\deskcam_dshow.dll")
 if ($UseDShow -and -not $Has32) {
@@ -71,6 +76,8 @@ if (-not $UseDShow) {
 
 New-Item -ItemType Directory -Force $Inst, $Data | Out-Null
 Install-File "$BuildDir\deskcam.exe" $Inst
+Install-File "$BuildDir\deskcam-diagnostics.exe" $Inst
+Install-File "$BuildDir32\deskcam-diagnostics.exe" "$Inst\x86"
 
 # Users edit config.ini and the app writes stream.bin; LocalService (Frame Server), AppContainer
 # and LPAC consumers (the DirectShow filter inside sandboxed apps) read them.
@@ -127,3 +134,4 @@ Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Des
 Write-Host "DeskCam installed to $Inst as $Mode"
 Write-Host "Config: $Data\config.ini (tray menu > Restart after editing)"
 Write-Host "Log:    $env:LOCALAPPDATA\DeskCam\deskcam.log"
+Write-Host "Diagnostics: $Inst\deskcam-diagnostics.exe (run as yourself, not as administrator, while DeskCam is running)"

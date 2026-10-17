@@ -3,9 +3,10 @@
 ; Installs the right camera for the running Windows:
 ;   Windows 11 (build 22000+): the Media Foundation virtual camera source (deskcam_source.dll)
 ;   Windows 10 (build 18362+): the DirectShow capture filter, 64-bit and 32-bit (deskcam_dshow.dll)
+; plus the diagnostics tool on every Windows: deskcam-diagnostics.exe and its 32-bit helper in x86\.
 ; Mirrors scripts/install.ps1 and scripts/uninstall.ps1.
 ;
-; Build (after cargo release builds for x64 and i686):
+; Build (after cargo release builds for x64 and i686, including -p deskcam-diagnostics):
 ;   ISCC.exe /DAppVersion=0.1.0 installer\deskcam.iss
 
 #ifndef AppVersion
@@ -63,6 +64,9 @@ Source: "{#BuildDir}\deskcam.exe"; DestDir: "{app}"; Flags: ignoreversion restar
 Source: "{#BuildDir}\deskcam_source.dll"; DestDir: "{app}"; Check: IsWin11; Flags: ignoreversion restartreplace uninsrestartdelete
 Source: "{#BuildDir}\deskcam_dshow.dll"; DestDir: "{app}"; Check: not IsWin11; Flags: ignoreversion restartreplace uninsrestartdelete
 Source: "{#BuildDir32}\deskcam_dshow.dll"; DestDir: "{app}\x86"; Check: not IsWin11; Flags: ignoreversion restartreplace uninsrestartdelete
+; Diagnostics on every Windows; the x86 helper checks the 32-bit camera view.
+Source: "{#BuildDir}\deskcam-diagnostics.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace uninsrestartdelete
+Source: "{#BuildDir32}\deskcam-diagnostics.exe"; DestDir: "{app}\x86"; Flags: ignoreversion restartreplace uninsrestartdelete
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
@@ -70,11 +74,13 @@ Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{commonappdata}\DeskCam"; Flags: uninsneveruninstall
 ; Remove the program folders when empty, even ones an older scripts\install.ps1 created.
 Name: "{app}"; Flags: uninsalwaysuninstall
-Name: "{app}\x86"; Flags: uninsalwaysuninstall; Check: UsesX86Folder
+Name: "{app}\x86"; Flags: uninsalwaysuninstall
 
 [Icons]
 Name: "{autoprograms}\DeskCam"; Filename: "{app}\deskcam.exe"; Comment: "Share your desktop as a camera"
 Name: "{autodesktop}\DeskCam"; Filename: "{app}\deskcam.exe"; Comment: "Share your desktop as a camera"; Tasks: desktopicon
+; Runs as whoever opens it, unelevated; reports go to that user's %LOCALAPPDATA%\DeskCam.
+Name: "{autoprograms}\DeskCam Diagnostics"; Filename: "{app}\deskcam-diagnostics.exe"; WorkingDir: "{app}"; Comment: "Collect a DeskCam troubleshooting report"
 
 [Run]
 ; Users edit config.ini and the app writes stream.bin; LocalService (Frame Server), AppContainer
@@ -101,7 +107,7 @@ Filename: "{sys}\net.exe"; Parameters: "stop FrameServer /y"; Flags: runhidden; 
 [UninstallDelete]
 Type: files; Name: "{commonappdata}\DeskCam\stream.bin"
 Type: files; Name: "{commonappdata}\DeskCam\stream.bin.tmp"
-; Renamed in-use DLLs left by scripts\install.ps1.
+; Renamed in-use files left by scripts\install.ps1.
 Type: files; Name: "{app}\*.old-*"
 Type: files; Name: "{app}\x86\*.old-*"
 
@@ -112,12 +118,6 @@ var
 begin
   GetWindowsVersionEx(Version);
   Result := Version.Build >= 22000;
-end;
-
-{ The 32-bit filter folder: Windows 10 installs, or left over from an earlier one. }
-function UsesX86Folder: Boolean;
-begin
-  Result := (not IsWin11) or DirExists(ExpandConstant('{app}\x86'));
 end;
 
 function ConfigPath: String;

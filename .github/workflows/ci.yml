@@ -16,8 +16,16 @@ jobs:
       - name: Build (x64, all crates)
         run: cargo build --release --workspace --locked
 
-      - name: Build 32-bit DirectShow filter
-        run: cargo build --release --target i686-pc-windows-msvc -p deskcam-dshow --locked
+      - name: Build 32-bit DirectShow filter and diagnostics
+        run: cargo build --release --target i686-pc-windows-msvc -p deskcam-dshow -p deskcam-diagnostics --locked
+
+      - name: Compile installer with bundled diagnostics
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; if ($LASTEXITCODE) { throw 'Inno Setup install failed' } }
+          & $iscc /Q /DAppVersion=0.0.0-ci installer\deskcam.iss
+          if ($LASTEXITCODE) { throw "Installer compilation failed: $LASTEXITCODE" }
 
       - name: Check DLL exports
         shell: pwsh
@@ -32,6 +40,27 @@ jobs:
           # deskcam.exe must not import Windows 11-only functions, or it cannot start on Windows 10.
           $imports = & $dumpbin /imports target\release\deskcam.exe | Out-String
           if ($imports -match 'MFCreateVirtualCamera') { throw 'deskcam.exe imports MFCreateVirtualCamera' }
+          # Diagnostics must start even when optional Media Foundation components are absent.
+          foreach ($exe in 'target\release\deskcam-diagnostics.exe', 'target\i686-pc-windows-msvc\release\deskcam-diagnostics.exe') {
+            $imports = & $dumpbin /imports $exe | Out-String
+            if ($imports -match '(?im)^\s+(mfplat|mf|mfsensorgroup)\.dll\s*$') { throw "$exe imports optional Media Foundation DLLs" }
+            if ($imports -match '\bIsWow64Process2\b') { throw "$exe imports an API absent on early Windows 10 builds" }
+          }
+
+      - name: Smoke diagnostics without an installed camera
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force target\release\x86 | Out-Null
+          Copy-Item target\i686-pc-windows-msvc\release\deskcam-diagnostics.exe target\release\x86\
+          & target\release\deskcam-diagnostics.exe --no-pause --out target\diagnostics-ci.txt
+          if ($LASTEXITCODE) { throw "Diagnostics report collection failed: $LASTEXITCODE" }
+
+      - name: Upload diagnostic smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-smoke-report
+          path: target/diagnostics-ci.txt
 
       - name: Test
         # deskcam-source needs the Frame Server and Media Foundation, which Server runners lack.

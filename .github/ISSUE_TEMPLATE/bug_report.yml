@@ -1,0 +1,138 @@
+name: Bug report
+description: DeskCam is missing, black, frozen, crashing or otherwise not working.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. A diagnostic report from the affected PC usually shows the cause fastest:
+        follow [Debugging and reporting problems](https://github.com/sinnafuls/rust-virtual-cam#debugging-and-reporting-problems)
+        to create one (Start menu → **DeskCam Diagnostics**, or [DeskCam-Diagnostics.zip](https://github.com/sinnafuls/rust-virtual-cam/releases/latest/download/DeskCam-Diagnostics.zip) for older installs).
+
+        **This issue will be public.** If the diagnostics tool won't run, report the problem anyway and describe what happened below.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing the problem.
+      placeholder: DeskCam shows up in Discord, but the video stays black.
+    validations:
+      required: true
+
+  - type: input
+    id: deskcam-version
+    attributes:
+      label: DeskCam version
+      description: Settings → Apps → Installed apps → DeskCam, or the "DeskCam x.y.z starting" line in the log (tray menu → Open log).
+      placeholder: "0.1.1"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: Press Win+R, type `winver`, press Enter and copy the version and OS build line.
+      placeholder: Windows 11, Version 24H2 (OS Build 26100.2033)
+    validations:
+      required: true
+
+  - type: input
+    id: app
+    attributes:
+      label: App with the problem
+      description: The app that should see the camera, its version, and 32-bit or 64-bit if you know.
+      placeholder: Discord 1.0.9170 (64-bit)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Did this work before?
+      options:
+        - No, it never worked for me
+        - Yes, it used to work
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: last-working-version
+    attributes:
+      label: Last working version
+      description: If it used to work, the last DeskCam version (or Windows/app update) where it still worked.
+      placeholder: "0.1.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, in order, starting from DeskCam running in the tray.
+      placeholder: |
+        1. Start DeskCam (monitor = primary, fps = 30)
+        2. Open Discord → Settings → Voice & Video
+        3. Select "DeskCam (Windows Virtual Camera)" as the camera
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: The camera preview shows my desktop.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Exact error messages, the DeskCam tray tooltip, and whether the camera is missing, fails to open, or is black/frozen.
+      placeholder: The preview stays black. The tray tooltip says "streaming".
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostic-report
+    attributes:
+      label: Diagnostic report
+      description: |
+        Run DeskCam Diagnostics as your normal user (not as administrator) while DeskCam and the affected app are running.
+        When it prints "Report saved to:", open that `.txt` file (normally in `%LOCALAPPDATA%\DeskCam`) and review it:
+        it contains your Windows account name/SID, device names, file paths, settings and recent log lines.
+        Replace anything you don't want public with `<redacted>`.
+        Then drag the `.txt` file onto this box to attach it. Only paste the text if attaching fails.
+      placeholder: Drop the diagnostics-....txt file here.
+    validations:
+      required: false
+
+  - type: textarea
+    id: diagnostics-problem
+    attributes:
+      label: Diagnostics tool didn't run?
+      description: |
+        If DeskCam Diagnostics wouldn't start, was blocked, or closed without "Report saved to:", copy the exact message
+        (from Windows, your antivirus or the console window) or attach a screenshot, and say whether you used the Start menu entry or the ZIP.
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Other details, screenshots or log excerpts (tray menu → Open log). Review them for personal details first.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I understand issues and attachments are public and reviewed anything I am sharing for personal details.
+          required: true

@@ -37,6 +37,10 @@ jobs:
           cargo test --release --locked -p deskcam-proto -p deskcam -p deskcam-dshow
           cargo test --release --locked --target i686-pc-windows-msvc -p deskcam-dshow
 
+      - name: Build portable diagnostics
+        shell: pwsh
+        run: ./scripts/build-diagnostics.ps1
+
       - name: Build installer
         shell: pwsh
         run: |
@@ -45,8 +49,11 @@ jobs:
           & $iscc /Q "/DAppVersion=$env:VERSION" installer\deskcam.iss
           if ($LASTEXITCODE) { throw "ISCC failed: $LASTEXITCODE" }
           $exe = "DeskCam-Setup-$env:VERSION.exe"
-          "$((Get-FileHash "target\installer\$exe" -Algorithm SHA256).Hash.ToLower())  $exe" |
-            Set-Content target\installer\SHA256SUMS.txt -Encoding ascii
+          $sums = @(
+            "$((Get-FileHash "target\installer\$exe" -Algorithm SHA256).Hash.ToLower())  $exe"
+            "$((Get-FileHash 'target\diagnostics\DeskCam-Diagnostics.zip' -Algorithm SHA256).Hash.ToLower())  DeskCam-Diagnostics.zip"
+          )
+          $sums | Set-Content target\installer\SHA256SUMS.txt -Encoding ascii
 
       - name: Create draft release
         shell: pwsh
@@ -54,5 +61,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create '${{ github.ref_name }}' `
-            "target\installer\DeskCam-Setup-$env:VERSION.exe" target\installer\SHA256SUMS.txt `
+            "target\installer\DeskCam-Setup-$env:VERSION.exe" target\diagnostics\DeskCam-Diagnostics.zip target\installer\SHA256SUMS.txt `
             --draft --title "DeskCam $env:VERSION" --notes-file .github\release-notes.md --generate-notes
